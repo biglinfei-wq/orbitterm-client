@@ -1,8 +1,8 @@
 {
-  "version": "v0.1.61",
+  "version": "v0.1.62",
   "date": "2026-04-02",
-  "windowsPackage": "OrbitTerm_0.1.61_x64_en-US.msi",
+  "windowsPackage": "OrbitTerm_0.1.62_x64_en-US.msi",
   "macPackage": "",
-  "windowsSha256": "f7c831ad3fcbb40a8d498409b5c5b6b52431fa357110e5996622eedc8d7b87ef",
+  "windowsSha256": "31c231f9cc2a4474136f0d5706c5344c0bff5ab75e37d802e0ac7845e8e57580",
   "macSha256": "N/A"
 }
