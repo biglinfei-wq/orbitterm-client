@@ -1,0 +1,2 @@
+0c2b0673019265ebc0a8d3a3f9cdda7f4d92a4ff21c9223fe6623c41c679601a  ./OrbitTerm_0.1.77_x64-setup.exe
+004bf28c28388e15944a0b1fbbdedbc0eb7c37a4fe28b3ac9a33dbcb27b9fcf5  ./OrbitTerm_0.1.77_x64_en-US.msi
