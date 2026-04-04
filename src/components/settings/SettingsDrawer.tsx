@@ -1,0 +1,1558 @@
+import { useEffect, useMemo, useState } from 'react';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { toast } from 'sonner';
+import type { AuthMethod, IdentityConfig } from '../../types/host';
+import {
+  sshExportPrivateKey,
+  sshGenerateKeypair,
+  sshPasswordAuthStatus,
+  sshSetPasswordAuth,
+  type SshPasswordAuthStatusResponse,
+  type SshKeyAlgorithm
+} from '../../services/ssh';
+import { ORBIT_THEME_PRESETS } from '../../theme/orbitTheme';
+import { useHostStore } from '../../store/useHostStore';
+import {
+  useUiSettingsStore,
+  type CloseWindowAction,
+  type UiContrastMode
+} from '../../store/useUiSettingsStore';
+import { buildHostKey } from '../../utils/hostKey';
+import { APP_LANGUAGE_OPTIONS, type AppLanguage } from '../../i18n/core';
+import { useI18n } from '../../i18n/useI18n';
+
+interface SettingsDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  onOpenAbout: () => void;
+  activeCategory: SettingsCategory;
+  onCategoryChange: (category: SettingsCategory) => void;
+  focusSectionId: string | null;
+  focusSequence: number;
+  activeTerminalSessionId: string | null;
+  activeTerminalHostId: string | null;
+  activeTerminalTitle: string | null;
+  onOpenCloudAuth: () => void;
+}
+
+export type SettingsCategory = 'profile' | 'settings' | 'files' | 'other';
+
+const SETTINGS_CATEGORY_OPTIONS: ReadonlyArray<{ id: SettingsCategory }> = [
+  { id: 'profile' },
+  { id: 'settings' },
+  { id: 'files' },
+  { id: 'other' }
+];
+
+const FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  {
+    label: 'JetBrainsMono Nerd Font (图标推荐)',
+    value:
+      '"JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "Nerd Font Symbols", "JetBrains Mono", "IBM Plex Mono", "Source Code Pro", Inconsolata, monospace'
+  },
+  {
+    label: 'IBM Plex Mono (推荐)',
+    value:
+      '"IBM Plex Mono", "Symbols Nerd Font Mono", "Nerd Font Symbols", "JetBrainsMono Nerd Font", "JetBrains Mono", "Source Code Pro", Inconsolata, "Sarasa Mono SC", Menlo, Monaco, monospace'
+  },
+  {
+    label: 'Source Code Pro',
+    value:
+      '"Source Code Pro", "Symbols Nerd Font Mono", "Nerd Font Symbols", "IBM Plex Mono", "JetBrainsMono Nerd Font", "JetBrains Mono", Inconsolata, "Sarasa Mono SC", Menlo, Monaco, monospace'
+  },
+  {
+    label: 'Fira Code',
+    value:
+      '"Fira Code", "Symbols Nerd Font Mono", "Nerd Font Symbols", "IBM Plex Mono", "Source Code Pro", "JetBrainsMono Nerd Font", "JetBrains Mono", Inconsolata, Menlo, Monaco, monospace'
+  },
+  {
+    label: 'Inconsolata',
+    value:
+      'Inconsolata, "Symbols Nerd Font Mono", "Nerd Font Symbols", "IBM Plex Mono", "Source Code Pro", "JetBrainsMono Nerd Font", "JetBrains Mono", "Fira Code", Menlo, Monaco, monospace'
+  },
+  {
+    label: 'JetBrains Mono',
+    value:
+      '"JetBrains Mono", "Symbols Nerd Font Mono", "Nerd Font Symbols", "JetBrainsMono Nerd Font", "IBM Plex Mono", "Source Code Pro", Inconsolata, Menlo, Monaco, monospace'
+  },
+  {
+    label: 'Sarasa Mono SC',
+    value:
+      '"Sarasa Mono SC", "Symbols Nerd Font Mono", "Nerd Font Symbols", "IBM Plex Mono", "Source Code Pro", Inconsolata, "JetBrainsMono Nerd Font", "JetBrains Mono", Menlo, Monaco, monospace'
+  },
+  {
+    label: 'SF Mono',
+    value:
+      'SFMono-Regular, "SF Mono", "Symbols Nerd Font Mono", "Nerd Font Symbols", "IBM Plex Mono", "Source Code Pro", Inconsolata, Menlo, Monaco, monospace'
+  }
+];
+
+export function SettingsDrawer({
+  open,
+  onClose,
+  onOpenAbout,
+  activeCategory,
+  onCategoryChange,
+  focusSectionId,
+  focusSequence,
+  activeTerminalSessionId,
+  activeTerminalHostId,
+  activeTerminalTitle,
+  onOpenCloudAuth
+}: SettingsDrawerProps): JSX.Element | null {
+  const { t } = useI18n();
+  const terminalFontSize = useUiSettingsStore((state) => state.terminalFontSize);
+  const terminalFontFamily = useUiSettingsStore((state) => state.terminalFontFamily);
+  const terminalLineHeight = useUiSettingsStore((state) => state.terminalLineHeight);
+  const terminalOpacity = useUiSettingsStore((state) => state.terminalOpacity);
+  const terminalBlur = useUiSettingsStore((state) => state.terminalBlur);
+  const acrylicBlur = useUiSettingsStore((state) => state.acrylicBlur);
+  const acrylicSaturation = useUiSettingsStore((state) => state.acrylicSaturation);
+  const acrylicBrightness = useUiSettingsStore((state) => state.acrylicBrightness);
+  const themePresetId = useUiSettingsStore((state) => state.themePresetId);
+  const autoLockEnabled = useUiSettingsStore((state) => state.autoLockEnabled);
+  const autoLockMinutes = useUiSettingsStore((state) => state.autoLockMinutes);
+  const closeWindowAction = useUiSettingsStore((state) => state.closeWindowAction);
+  const autoSftpPathSyncEnabled = useUiSettingsStore((state) => state.autoSftpPathSyncEnabled);
+  const language = useUiSettingsStore((state) => state.language);
+  const uiScalePercent = useUiSettingsStore((state) => state.uiScalePercent);
+  const contrastMode = useUiSettingsStore((state) => state.contrastMode);
+  const setTerminalFontSize = useUiSettingsStore((state) => state.setTerminalFontSize);
+  const setTerminalFontFamily = useUiSettingsStore((state) => state.setTerminalFontFamily);
+  const setTerminalLineHeight = useUiSettingsStore((state) => state.setTerminalLineHeight);
+  const setTerminalOpacity = useUiSettingsStore((state) => state.setTerminalOpacity);
+  const setTerminalBlur = useUiSettingsStore((state) => state.setTerminalBlur);
+  const setAcrylicBlur = useUiSettingsStore((state) => state.setAcrylicBlur);
+  const setAcrylicSaturation = useUiSettingsStore((state) => state.setAcrylicSaturation);
+  const setAcrylicBrightness = useUiSettingsStore((state) => state.setAcrylicBrightness);
+  const setThemePresetId = useUiSettingsStore((state) => state.setThemePresetId);
+  const setAutoLockEnabled = useUiSettingsStore((state) => state.setAutoLockEnabled);
+  const setAutoLockMinutes = useUiSettingsStore((state) => state.setAutoLockMinutes);
+  const setCloseWindowAction = useUiSettingsStore((state) => state.setCloseWindowAction);
+  const setAutoSftpPathSyncEnabled = useUiSettingsStore((state) => state.setAutoSftpPathSyncEnabled);
+  const setLanguage = useUiSettingsStore((state) => state.setLanguage);
+  const setUiScalePercent = useUiSettingsStore((state) => state.setUiScalePercent);
+  const setContrastMode = useUiSettingsStore((state) => state.setContrastMode);
+  const cloudSyncSession = useHostStore((state) => state.cloudSyncSession);
+  const cloudSyncPolicy = useHostStore((state) => state.cloudSyncPolicy);
+  const cloudLicenseStatus = useHostStore((state) => state.cloudLicenseStatus);
+  const isActivatingCloudLicense = useHostStore((state) => state.isActivatingCloudLicense);
+  const isSyncingCloud = useHostStore((state) => state.isSyncingCloud);
+  const cloudSyncError = useHostStore((state) => state.cloudSyncError);
+  const identities = useHostStore((state) => state.identities);
+  const hosts = useHostStore((state) => state.hosts);
+  const isSavingVault = useHostStore((state) => state.isSavingVault);
+  const addIdentity = useHostStore((state) => state.addIdentity);
+  const updateIdentity = useHostStore((state) => state.updateIdentity);
+  const logoutCloudAccount = useHostStore((state) => state.logoutCloudAccount);
+  const refreshCloudLicenseStatus = useHostStore((state) => state.refreshCloudLicenseStatus);
+  const cloudUser2FAStatus = useHostStore((state) => state.cloudUser2FAStatus);
+  const cloudUser2FASetup = useHostStore((state) => state.cloudUser2FASetup);
+  const cloudUser2FABackupCodes = useHostStore((state) => state.cloudUser2FABackupCodes);
+  const isUpdatingCloud2FA = useHostStore((state) => state.isUpdatingCloud2FA);
+  const refreshCloudUser2FAStatus = useHostStore((state) => state.refreshCloudUser2FAStatus);
+  const beginCloudUser2FASetup = useHostStore((state) => state.beginCloudUser2FASetup);
+  const confirmEnableCloudUser2FA = useHostStore((state) => state.confirmEnableCloudUser2FA);
+  const disableCloudUser2FA = useHostStore((state) => state.disableCloudUser2FA);
+  const activateCloudLicenseCode = useHostStore((state) => state.activateCloudLicenseCode);
+  const syncPullFromCloud = useHostStore((state) => state.syncPullFromCloud);
+  const vaultVersion = useHostStore((state) => state.vaultVersion);
+  const cloudDevices = useHostStore((state) => state.cloudDevices);
+  const isLoadingCloudDevices = useHostStore((state) => state.isLoadingCloudDevices);
+  const loadCloudDevices = useHostStore((state) => state.loadCloudDevices);
+  const revokeCloudDevice = useHostStore((state) => state.revokeCloudDevice);
+  const revokeAllCloudDevices = useHostStore((state) => state.revokeAllCloudDevices);
+  const [identityMode, setIdentityMode] = useState<'new' | 'existing'>('new');
+  const [selectedIdentityId, setSelectedIdentityId] = useState<string>('');
+  const [identityNameInput, setIdentityNameInput] = useState<string>('');
+  const [identityUsernameInput, setIdentityUsernameInput] = useState<string>('root');
+  const [keyAlgorithm, setKeyAlgorithm] = useState<SshKeyAlgorithm>('ed25519');
+  const [isGeneratingKey, setIsGeneratingKey] = useState<boolean>(false);
+  const [isCheckingPasswordAuth, setIsCheckingPasswordAuth] = useState<boolean>(false);
+  const [isUpdatingPasswordAuth, setIsUpdatingPasswordAuth] = useState<boolean>(false);
+  const [passwordAuthStatus, setPasswordAuthStatus] = useState<SshPasswordAuthStatusResponse | null>(null);
+  const [isExportingKey, setIsExportingKey] = useState<boolean>(false);
+  const [licenseCodeInput, setLicenseCodeInput] = useState<string>('');
+  const [isLicensePanelExpanded, setIsLicensePanelExpanded] = useState<boolean>(false);
+  const [cloud2FAEnableOtpInput, setCloud2FAEnableOtpInput] = useState<string>('');
+  const [cloud2FADisableOtpInput, setCloud2FADisableOtpInput] = useState<string>('');
+  const [cloud2FADisableBackupInput, setCloud2FADisableBackupInput] = useState<string>('');
+
+  useEffect(() => {
+    if (!open || !cloudSyncSession) {
+      return;
+    }
+    void loadCloudDevices();
+    void refreshCloudLicenseStatus();
+    void refreshCloudUser2FAStatus();
+  }, [cloudSyncSession, loadCloudDevices, open, refreshCloudLicenseStatus, refreshCloudUser2FAStatus]);
+
+  useEffect(() => {
+    if (identities.length === 0) {
+      setSelectedIdentityId('');
+      return;
+    }
+    if (!selectedIdentityId || !identities.some((item) => item.id === selectedIdentityId)) {
+      setSelectedIdentityId(identities[0]?.id ?? '');
+    }
+  }, [identities, selectedIdentityId]);
+
+  const selectedIdentity = useMemo(() => {
+    if (!selectedIdentityId) {
+      return null;
+    }
+    return identities.find((identity) => identity.id === selectedIdentityId) ?? null;
+  }, [identities, selectedIdentityId]);
+
+  useEffect(() => {
+    if (identityMode !== 'existing' || !selectedIdentity) {
+      return;
+    }
+    setIdentityNameInput(selectedIdentity.name);
+    setIdentityUsernameInput(selectedIdentity.username);
+  }, [identityMode, selectedIdentity]);
+
+  const activeHost = useMemo(() => {
+    if (!activeTerminalHostId) {
+      return null;
+    }
+    return hosts.find((host) => buildHostKey(host) === activeTerminalHostId) ?? null;
+  }, [activeTerminalHostId, hosts]);
+
+  const activeSessionIdentity = useMemo(() => {
+    if (!activeHost) {
+      return null;
+    }
+    return identities.find((identity) => identity.id === activeHost.identityId) ?? null;
+  }, [activeHost, identities]);
+
+  const isProLicenseActive = useMemo(() => {
+    const status = (cloudLicenseStatus?.status ?? '').trim().toLowerCase();
+    return Boolean(cloudSyncSession && cloudLicenseStatus?.active && status !== 'grace');
+  }, [cloudLicenseStatus, cloudSyncSession]);
+  const normalizedLicenseFeatures = useMemo(() => {
+    const source = cloudLicenseStatus?.features ?? [];
+    return new Set(
+      source
+        .map((item) => item.trim().toLowerCase())
+        .filter((item) => item.length > 0)
+    );
+  }, [cloudLicenseStatus]);
+  const canUseKeyDeployFeature = useMemo(() => {
+    if (!isProLicenseActive) {
+      return false;
+    }
+    // Open-core hardening: server must explicitly grant paid capability.
+    if (normalizedLicenseFeatures.size === 0) {
+      return false;
+    }
+    return normalizedLicenseFeatures.has('key_deploy');
+  }, [isProLicenseActive, normalizedLicenseFeatures]);
+  const canUsePasswordAuthToggleFeature = useMemo(() => {
+    if (!isProLicenseActive) {
+      return false;
+    }
+    // Open-core hardening: server must explicitly grant paid capability.
+    if (normalizedLicenseFeatures.size === 0) {
+      return false;
+    }
+    return normalizedLicenseFeatures.has('ssh_password_auth_toggle');
+  }, [isProLicenseActive, normalizedLicenseFeatures]);
+
+  const accountDisplay = useMemo(() => {
+    if (!cloudSyncSession?.email) {
+      return t('settings.offlineMode');
+    }
+    return cloudSyncSession.email;
+  }, [cloudSyncSession, t]);
+
+  const accountAvatar = useMemo(() => {
+    const source = cloudSyncSession?.email?.trim();
+    if (!source) {
+      return 'OT';
+    }
+    return source.slice(0, 2).toUpperCase();
+  }, [cloudSyncSession]);
+
+  const showProfileCategory = activeCategory === 'profile';
+  const showSettingsCategory = activeCategory === 'settings';
+  const showFilesCategory = activeCategory === 'files';
+  const showOtherCategory = activeCategory === 'other';
+
+  const formatRelativeOnline = (isoText: string): string => {
+    const date = new Date(isoText);
+    if (Number.isNaN(date.getTime())) {
+      return '未知在线时间';
+    }
+    const diffMs = Date.now() - date.getTime();
+    if (diffMs < 60_000) {
+      return '刚刚在线';
+    }
+    if (diffMs < 3_600_000) {
+      return `${Math.floor(diffMs / 60_000)} 分钟前在线`;
+    }
+    if (diffMs < 86_400_000) {
+      return `${Math.floor(diffMs / 3_600_000)} 小时前在线`;
+    }
+    return `${Math.floor(diffMs / 86_400_000)} 天前在线`;
+  };
+
+  const authMethodLabel = (method: AuthMethod): string => {
+    return method === 'password' ? '密码认证' : '私钥认证';
+  };
+
+  const closeWindowActionLabel = (value: CloseWindowAction): string => {
+    if (value === 'tray') {
+      return '关闭后驻留系统托盘';
+    }
+    if (value === 'exit') {
+      return '关闭后直接退出';
+    }
+    return '每次关闭都询问';
+  };
+
+  const licenseSummary = useMemo(() => {
+    if (!cloudSyncSession) {
+      return '未登录';
+    }
+    if (!cloudLicenseStatus) {
+      return '授权状态待刷新';
+    }
+    const status = (cloudLicenseStatus.status ?? '').trim().toLowerCase();
+    if (status === 'grace') {
+      const graceEnds = cloudLicenseStatus.graceEndsAt ? `（宽限至：${cloudLicenseStatus.graceEndsAt}）` : '';
+      return `宽限期中${graceEnds}`;
+    }
+    if (status === 'revoked') {
+      return '授权已回收';
+    }
+    if (!cloudLicenseStatus.active) {
+      return '未激活（仅本地可用）';
+    }
+    if (cloudLicenseStatus.isLifetime) {
+      return '已激活（永久）';
+    }
+    if (cloudLicenseStatus.expiresAt) {
+      const hostLimit =
+        typeof cloudLicenseStatus.maxHosts === 'number' && cloudLicenseStatus.maxHosts > 0
+          ? `主机上限 ${cloudLicenseStatus.maxHosts}`
+          : '主机不限制';
+      const deviceLimit =
+        typeof cloudLicenseStatus.maxDevices === 'number' && cloudLicenseStatus.maxDevices > 0
+          ? `设备上限 ${cloudLicenseStatus.maxDevices}`
+          : '设备不限制';
+      return `已激活（到期：${cloudLicenseStatus.expiresAt}，${hostLimit}，${deviceLimit}）`;
+    }
+    return '已激活';
+  }, [cloudLicenseStatus, cloudSyncSession]);
+  const syncStatusText = useMemo(() => {
+    if (cloudSyncSession && !cloudSyncError) {
+      return isSyncingCloud ? '正常（同步中）' : '正常';
+    }
+    return '异常';
+  }, [cloudSyncError, cloudSyncSession, isSyncingCloud]);
+
+  useEffect(() => {
+    if (!open || !focusSectionId) {
+      return;
+    }
+    let attempts = 0;
+    const maxAttempts = 10;
+    const tryScroll = (): void => {
+      const target = document.getElementById(focusSectionId);
+      if (target) {
+        target.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+        return;
+      }
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        window.setTimeout(tryScroll, 45);
+      }
+    };
+    window.setTimeout(tryScroll, 20);
+  }, [focusSectionId, focusSequence, open, activeCategory]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (focusSectionId === 'settings-sync-license') {
+      setIsLicensePanelExpanded(true);
+    }
+  }, [focusSectionId, focusSequence, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (!activeTerminalSessionId) {
+      setPasswordAuthStatus(null);
+      return;
+    }
+    if (!showFilesCategory) {
+      return;
+    }
+    void refreshPasswordAuthStatus();
+  }, [activeTerminalSessionId, open, showFilesCategory]);
+
+  const handleGenerateIdentityKeypair = async (): Promise<void> => {
+    const normalizedName = identityNameInput.trim();
+    const normalizedUsername = identityUsernameInput.trim();
+    if (!normalizedUsername) {
+      toast.error('请输入身份用户名。');
+      return;
+    }
+    if (identityMode === 'existing' && !selectedIdentity) {
+      toast.error('请选择一个已有身份。');
+      return;
+    }
+
+    setIsGeneratingKey(true);
+    try {
+      const comment = `${normalizedUsername}@orbitterm`;
+      const generated = await sshGenerateKeypair(keyAlgorithm, comment);
+      const authConfig = {
+        method: 'privateKey' as const,
+        password: '',
+        privateKey: generated.privateKey,
+        passphrase: ''
+      };
+
+      if (identityMode === 'existing' && selectedIdentity) {
+        const nextIdentity: IdentityConfig = {
+          ...selectedIdentity,
+          name: normalizedName || selectedIdentity.name,
+          username: normalizedUsername,
+          authConfig
+        };
+        await updateIdentity(nextIdentity);
+        toast.success(`已为身份「${nextIdentity.name}」生成新密钥`, {
+          description: generated.fingerprint
+        });
+        return;
+      }
+
+      const created = await addIdentity({
+        name: normalizedName || `${normalizedUsername}@identity`,
+        username: normalizedUsername,
+        authConfig
+      });
+      setIdentityMode('existing');
+      setSelectedIdentityId(created.id);
+      toast.success(`已创建身份「${created.name}」并写入新密钥`, {
+        description: generated.fingerprint
+      });
+    } catch (error) {
+      const fallback = '生成密钥失败，请稍后重试。';
+      const message = error instanceof Error ? error.message : fallback;
+      toast.error(message || fallback);
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const refreshPasswordAuthStatus = async (): Promise<void> => {
+    if (!activeTerminalSessionId) {
+      setPasswordAuthStatus(null);
+      return;
+    }
+
+    setIsCheckingPasswordAuth(true);
+    try {
+      const status = await sshPasswordAuthStatus(activeTerminalSessionId);
+      setPasswordAuthStatus(status);
+    } catch (error) {
+      const fallback = '读取服务器密码登录状态失败，请稍后重试。';
+      const message = error instanceof Error ? error.message : fallback;
+      toast.error(message || fallback);
+    } finally {
+      setIsCheckingPasswordAuth(false);
+    }
+  };
+
+  const handleTogglePasswordAuth = async (enabled: boolean): Promise<void> => {
+    if (!canUsePasswordAuthToggleFeature) {
+      toast.error('当前授权不包含“密码登录策略切换”能力，请先激活或升级专业版。');
+      return;
+    }
+    if (!activeTerminalSessionId) {
+      toast.error('请先连接一个服务器会话。');
+      return;
+    }
+
+    if (!enabled) {
+      const confirmed = window.confirm(
+        '即将关闭该服务器的 SSH 密码登录。请确认你已验证密钥可登录，否则可能导致账户被锁在外面。是否继续？'
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setIsUpdatingPasswordAuth(true);
+    try {
+      const result = await sshSetPasswordAuth(activeTerminalSessionId, enabled);
+      setPasswordAuthStatus(result);
+      const actionLabel = enabled ? '已开启密码登录' : '已关闭密码登录';
+      const backupHint = result.backupPath ? `（已备份：${result.backupPath}）` : '';
+      toast.success(`${actionLabel}${backupHint}`);
+    } catch (error) {
+      const fallback = enabled ? '开启密码登录失败。' : '关闭密码登录失败。';
+      const message = error instanceof Error ? error.message : fallback;
+      toast.error(message || fallback);
+    } finally {
+      setIsUpdatingPasswordAuth(false);
+    }
+  };
+
+  const handleExportPrivateKey = async (identity: IdentityConfig): Promise<void> => {
+    const privateKey = identity.authConfig.privateKey?.trim() ?? '';
+    if (!privateKey) {
+      toast.error('当前身份未配置私钥，无法导出。');
+      return;
+    }
+
+    const fileSafeName = identity.name.replace(/[^\w\u4e00-\u9fa5-]+/g, '-');
+    const selectedPath = await saveDialog({
+      defaultPath: `${fileSafeName || 'orbitterm-identity'}.pem`
+    });
+    if (!selectedPath || Array.isArray(selectedPath)) {
+      return;
+    }
+
+    setIsExportingKey(true);
+    try {
+      const result = await sshExportPrivateKey(privateKey, selectedPath);
+      toast.success('私钥导出成功', {
+        description: `${result.path}（${result.bytes} bytes）`
+      });
+    } catch (error) {
+      const fallback = '私钥导出失败，请检查目标目录权限。';
+      const message = error instanceof Error ? error.message : fallback;
+      toast.error(message || fallback);
+    } finally {
+      setIsExportingKey(false);
+    }
+  };
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex justify-end bg-slate-900/36 backdrop-blur-[4px]">
+      <button
+        aria-label="关闭设置"
+        className="flex-1 cursor-default"
+        onClick={onClose}
+        type="button"
+      />
+      <aside className="h-full w-full max-w-[620px] overflow-y-auto border-l border-white/25 bg-gradient-to-b from-[#eef4ff] via-[#ecf3ff] to-[#e6f0ff] p-5 shadow-[0_24px_80px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+        <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between border-b border-white/50 bg-[#eef5ff]/92 px-5 py-4 backdrop-blur-2xl">
+          <h2 className="text-base font-semibold text-slate-900">{t('settings.centerTitle')}</h2>
+          <button
+            className="rounded-md px-2 py-1 text-xs text-slate-600 hover:bg-white/70"
+            onClick={onClose}
+            type="button"
+          >
+            {t('common.close')}
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-5">
+          <section className="rounded-2xl bg-white/84 p-4 shadow-[0_12px_28px_rgba(15,23,42,0.12)] ring-1 ring-[#cbdcf8]">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#8ab1e8] bg-[#2a5b9f] text-sm font-semibold text-white">
+                {accountAvatar}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{accountDisplay}</p>
+                <p className="text-[11px] text-slate-600">
+                  {cloudSyncSession ? t('settings.cloudLoggedIn') : t('settings.cloudNotLoggedIn')}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {SETTINGS_CATEGORY_OPTIONS.map((item) => (
+                <button
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+                    activeCategory === item.id
+                      ? 'border-[#3a73db] bg-[#dde9ff] text-[#1f4e8f] shadow-[0_4px_12px_rgba(40,85,170,0.2)]'
+                      : 'border-[#c2d6f2] bg-white/90 text-slate-700 hover:bg-white'
+                  }`}
+                  key={item.id}
+                  onClick={() => onCategoryChange(item.id)}
+                  type="button"
+                >
+                  {t(`settings.category.${item.id}`)}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {showSettingsCategory && (
+            <section
+            className="scroll-mt-20 space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-font"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">终端字体</h3>
+            <label className="block text-xs text-slate-600" htmlFor="terminal-font-family">
+              字体家族
+            </label>
+            <select
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+              id="terminal-font-family"
+              onChange={(event) => setTerminalFontFamily(event.target.value)}
+              value={terminalFontFamily}
+            >
+              {FONT_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-500">
+              推荐安装 JetBrainsMono Nerd Font，可获得更完整的文件夹与 Git 图标显示效果。
+            </p>
+
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>字体大小</span>
+              <span>{terminalFontSize}px</span>
+            </div>
+            <input
+              className="w-full accent-[#2f6df4]"
+              max={22}
+              min={11}
+              onChange={(event) => setTerminalFontSize(Number(event.target.value))}
+              step={1}
+              type="range"
+              value={terminalFontSize}
+            />
+
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>行间距</span>
+              <span>{terminalLineHeight.toFixed(2)}x</span>
+            </div>
+            <input
+              className="w-full accent-[#2f6df4]"
+              max={2.4}
+              min={1}
+              onChange={(event) => setTerminalLineHeight(Number(event.target.value))}
+              step={0.05}
+              type="range"
+              value={terminalLineHeight}
+            />
+            </section>
+          )}
+
+          {showSettingsCategory && (
+            <section
+            className="scroll-mt-20 space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-acrylic"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">Acrylic / Blur</h3>
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>终端背景透明度</span>
+              <span>{terminalOpacity}%</span>
+            </div>
+            <input
+              className="w-full accent-[#2f6df4]"
+              max={100}
+              min={50}
+              onChange={(event) => setTerminalOpacity(Number(event.target.value))}
+              step={1}
+              type="range"
+              value={terminalOpacity}
+            />
+
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>磨砂强度</span>
+              <span>{terminalBlur}px</span>
+            </div>
+            <input
+              className="w-full accent-[#2f6df4]"
+              max={28}
+              min={0}
+              onChange={(event) => setTerminalBlur(Number(event.target.value))}
+              step={1}
+              type="range"
+              value={terminalBlur}
+            />
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white/70 p-2.5">
+              <p className="text-[11px] font-semibold text-slate-700">全局毛玻璃微调（赛博质感）</p>
+
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                <span>全局模糊</span>
+                <span>{acrylicBlur}px</span>
+              </div>
+              <input
+                className="w-full accent-[#2f6df4]"
+                max={48}
+                min={0}
+                onChange={(event) => setAcrylicBlur(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={acrylicBlur}
+              />
+
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                <span>饱和度</span>
+                <span>{acrylicSaturation}%</span>
+              </div>
+              <input
+                className="w-full accent-[#2f6df4]"
+                max={220}
+                min={60}
+                onChange={(event) => setAcrylicSaturation(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={acrylicSaturation}
+              />
+
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                <span>亮度</span>
+                <span>{acrylicBrightness}%</span>
+              </div>
+              <input
+                className="w-full accent-[#2f6df4]"
+                max={150}
+                min={70}
+                onChange={(event) => setAcrylicBrightness(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={acrylicBrightness}
+              />
+            </div>
+            </section>
+          )}
+
+          {showSettingsCategory && (
+            <section
+            className="scroll-mt-20 space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-theme"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">主题配色</h3>
+            <div className="space-y-2">
+              {ORBIT_THEME_PRESETS.map((preset) => (
+                <button
+                  className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                    preset.id === themePresetId
+                      ? 'bg-[#eaf1ff] shadow-[0_8px_20px_rgba(37,99,235,0.16)]'
+                      : 'border-white/70 bg-white/80 hover:border-slate-200 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
+                  }`}
+                  key={preset.id}
+                  onClick={() => setThemePresetId(preset.id)}
+                  style={
+                    preset.id === themePresetId
+                      ? {
+                          borderColor: preset.terminalBorder
+                        }
+                      : undefined
+                  }
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">{preset.name}</p>
+                      <p className="mt-0.5 text-xs text-slate-600">{preset.description}</p>
+                    </div>
+                    <span className="rounded-md border border-slate-200 bg-white/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                      {preset.id}
+                    </span>
+                  </div>
+                  <div className="mt-2 overflow-hidden rounded-lg border border-slate-200/80 bg-white">
+                    <div className="h-7 w-full" style={{ background: preset.bodyBackground }} />
+                    <div
+                      className="grid grid-cols-5 gap-1 px-2 py-1"
+                      style={{ background: preset.terminalTheme.background ?? preset.terminalSurfaceHex }}
+                    >
+                      <span
+                        className="h-1.5 rounded"
+                        style={{ background: preset.terminalTheme.foreground ?? '#ffffff' }}
+                      />
+                      <span className="h-1.5 rounded" style={{ background: preset.terminalTheme.blue ?? '#3b82f6' }} />
+                      <span className="h-1.5 rounded" style={{ background: preset.terminalTheme.green ?? '#22c55e' }} />
+                      <span className="h-1.5 rounded" style={{ background: preset.terminalTheme.magenta ?? '#a855f7' }} />
+                      <span className="h-1.5 rounded" style={{ background: preset.terminalTheme.cursor ?? '#f8fafc' }} />
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            </section>
+          )}
+
+          {showSettingsCategory && (
+            <section className="space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
+              <h3 className="text-sm font-semibold text-slate-800">{t('settings.languageTitle')}</h3>
+              <p className="text-xs text-slate-600">{t('settings.languageDesc')}</p>
+              <select
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                onChange={(event) => {
+                  setLanguage(event.target.value as AppLanguage);
+                }}
+                value={language}
+              >
+                {APP_LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </section>
+          )}
+
+          {showSettingsCategory && (
+            <section className="space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
+              <h3 className="text-sm font-semibold text-slate-800">无障碍</h3>
+              <p className="text-xs text-slate-600">支持界面缩放与高对比度模式，长时间使用更舒适。</p>
+
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span>界面缩放</span>
+                <span>{uiScalePercent}%</span>
+              </div>
+              <input
+                className="w-full accent-[#2f6df4]"
+                max={130}
+                min={85}
+                onChange={(event) => {
+                  setUiScalePercent(Number(event.target.value));
+                }}
+                step={1}
+                type="range"
+                value={uiScalePercent}
+              />
+
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs text-slate-600" htmlFor="contrast-mode">
+                  对比度档位
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                  id="contrast-mode"
+                  onChange={(event) => {
+                    setContrastMode(event.target.value as UiContrastMode);
+                  }}
+                  value={contrastMode}
+                >
+                  <option value="standard">标准对比度</option>
+                  <option value="high">高对比度</option>
+                </select>
+              </div>
+            </section>
+          )}
+
+          {showSettingsCategory && (
+            <section
+            className="scroll-mt-20 space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-security"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">安全</h3>
+            <label className="flex items-start gap-3">
+              <input
+                checked={autoLockEnabled}
+                className="mt-0.5 h-4 w-4 accent-[#2f6df4]"
+                onChange={(event) => setAutoLockEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <span className="text-xs text-slate-700">App 隐藏或闲置后自动锁定金库（推荐开启）。</span>
+            </label>
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span>自动锁定时长</span>
+                <span>{autoLockMinutes} 分钟</span>
+              </div>
+              <input
+                className="w-full accent-[#2f6df4]"
+                disabled={!autoLockEnabled}
+                max={120}
+                min={1}
+                onChange={(event) => setAutoLockMinutes(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={autoLockMinutes}
+              />
+            </div>
+
+            <label className="flex items-start gap-3 pt-1">
+              <input
+                checked={autoSftpPathSyncEnabled}
+                className="mt-0.5 h-4 w-4 accent-[#2f6df4]"
+                onChange={(event) => setAutoSftpPathSyncEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <span className="text-xs text-slate-700">
+                自动同步终端路径到 SFTP（默认开启，执行 cd/pushd/popd 后自动切换目录）。
+              </span>
+            </label>
+
+            <div className="space-y-1.5 pt-2">
+              <label className="text-xs text-slate-600" htmlFor="close-window-action">
+                点击窗口关闭按钮时
+              </label>
+              <select
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                id="close-window-action"
+                onChange={(event) => {
+                  setCloseWindowAction(event.target.value as CloseWindowAction);
+                }}
+                value={closeWindowAction}
+              >
+                <option value="ask">每次关闭都询问（推荐）</option>
+                <option value="tray">默认驻留系统托盘</option>
+                <option value="exit">默认直接退出</option>
+              </select>
+              <p className="text-[11px] text-slate-500">
+                当前策略：{closeWindowActionLabel(closeWindowAction)}
+              </p>
+            </div>
+            </section>
+          )}
+
+          {showFilesCategory && (
+            <section
+            className="scroll-mt-20 space-y-3 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-identity"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">身份管理 · SSH 密钥</h3>
+            <p className="text-xs text-slate-700">
+              生成的新密钥会立即写入本地 E2EE 金库，并通过现有云同步链路自动上传。
+            </p>
+
+            <div className="rounded-xl bg-slate-50/85 p-3 ring-1 ring-slate-200/70">
+              <p className="text-xs font-semibold text-slate-700">生成新密钥对</p>
+              <div className="mt-2 flex items-center gap-4 text-xs text-slate-700">
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    checked={identityMode === 'new'}
+                    className="h-3.5 w-3.5 accent-[#2f6df4]"
+                    onChange={() => setIdentityMode('new')}
+                    type="radio"
+                  />
+                  新建身份
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    checked={identityMode === 'existing'}
+                    className="h-3.5 w-3.5 accent-[#2f6df4]"
+                    onChange={() => setIdentityMode('existing')}
+                    type="radio"
+                  />
+                  更新已有身份
+                </label>
+              </div>
+
+              {identityMode === 'existing' && (
+                <div className="mt-2 space-y-1.5">
+                  <label className="text-xs text-slate-600" htmlFor="key-target-identity">
+                    目标身份
+                  </label>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                    id="key-target-identity"
+                    onChange={(event) => setSelectedIdentityId(event.target.value)}
+                    value={selectedIdentityId}
+                  >
+                    {identities.map((identity) => (
+                      <option key={identity.id} value={identity.id}>
+                        {identity.name} ({identity.username})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-600" htmlFor="key-identity-name">
+                    身份名称
+                  </label>
+                  <input
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                    id="key-identity-name"
+                    onChange={(event) => setIdentityNameInput(event.target.value)}
+                    placeholder="例如：生产服务器密钥"
+                    value={identityNameInput}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-600" htmlFor="key-identity-username">
+                    登录用户名
+                  </label>
+                  <input
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                    id="key-identity-username"
+                    onChange={(event) => setIdentityUsernameInput(event.target.value)}
+                    placeholder="例如：root"
+                    value={identityUsernameInput}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-2 space-y-1.5">
+                <label className="text-xs text-slate-600" htmlFor="key-algorithm">
+                  密钥算法
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-300"
+                  id="key-algorithm"
+                  onChange={(event) => setKeyAlgorithm(event.target.value as SshKeyAlgorithm)}
+                  value={keyAlgorithm}
+                >
+                  <option value="ed25519">Ed25519（推荐，轻量安全）</option>
+                  <option value="ecdsaP256">ECDSA P-256（主流兼容）</option>
+                  <option value="ecdsaP384">ECDSA P-384（更高安全边际）</option>
+                  <option value="ecdsaP521">ECDSA P-521（高强度）</option>
+                  <option value="rsa3072">RSA 3072（兼顾安全与兼容）</option>
+                  <option value="rsa4096">RSA 4096（兼容优先）</option>
+                </select>
+              </div>
+
+              <button
+                className="mt-3 rounded-lg border border-[#2f6df4] bg-[#2f6df4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#245ad0] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isGeneratingKey || isSavingVault}
+                onClick={() => {
+                  void handleGenerateIdentityKeypair();
+                }}
+                type="button"
+              >
+                {isGeneratingKey ? '生成中...' : '生成新密钥对并保存到金库'}
+              </button>
+            </div>
+
+            <div className="rounded-xl bg-slate-50/85 p-3 ring-1 ring-slate-200/70">
+              <p className="text-xs font-semibold text-slate-700">已有身份密钥</p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                一键部署入口已迁移到“资产管理”中的每台设备操作区。当前会话：
+                {activeTerminalTitle ?? '未连接'}
+                {activeSessionIdentity
+                  ? `（${authMethodLabel(activeSessionIdentity.authConfig.method)}）`
+                  : ''}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                授权状态：{isProLicenseActive ? '已激活' : '未激活'}
+                {isProLicenseActive
+                  ? `（密钥部署：${canUseKeyDeployFeature ? '可用' : '不可用'}；密码策略：${
+                      canUsePasswordAuthToggleFeature ? '可用' : '不可用'
+                    }）`
+                  : '（需激活后使用专业能力）'}
+              </p>
+              <div className="mt-2 rounded-lg border border-slate-200 bg-white/80 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold text-slate-700">SSH 密码登录策略</p>
+                  <button
+                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!activeTerminalSessionId || isCheckingPasswordAuth || isUpdatingPasswordAuth}
+                    onClick={() => {
+                      void refreshPasswordAuthStatus();
+                    }}
+                    type="button"
+                  >
+                    {isCheckingPasswordAuth ? '检测中...' : '刷新状态'}
+                  </button>
+                </div>
+                {!activeTerminalSessionId ? (
+                  <p className="mt-1 text-[11px] text-slate-500">请先连接服务器会话后再管理密码登录策略。</p>
+                ) : passwordAuthStatus ? (
+                  passwordAuthStatus.supported ? (
+                    <>
+                      <p className="mt-1 text-[11px] text-slate-600">
+                        当前状态：{passwordAuthStatus.enabled ? '已开启密码登录' : '已关闭密码登录'}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">{passwordAuthStatus.detail}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={
+                            isUpdatingPasswordAuth ||
+                            !canUsePasswordAuthToggleFeature ||
+                            passwordAuthStatus.enabled
+                          }
+                          onClick={() => {
+                            void handleTogglePasswordAuth(true);
+                          }}
+                          type="button"
+                        >
+                          {isUpdatingPasswordAuth ? '处理中...' : '开启密码登录'}
+                        </button>
+                        <button
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={
+                            isUpdatingPasswordAuth ||
+                            !canUsePasswordAuthToggleFeature ||
+                            !passwordAuthStatus.enabled
+                          }
+                          onClick={() => {
+                            void handleTogglePasswordAuth(false);
+                          }}
+                          type="button"
+                        >
+                          {isUpdatingPasswordAuth ? '处理中...' : '关闭密码登录'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      当前服务器不支持该能力：{passwordAuthStatus.detail}
+                    </p>
+                  )
+                ) : (
+                  <p className="mt-1 text-[11px] text-slate-500">尚未检测，请点击“刷新状态”。</p>
+                )}
+                {!canUsePasswordAuthToggleFeature && (
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    当前授权不包含“密码登录策略切换”能力，无法执行修改。
+                  </p>
+                )}
+              </div>
+              <div className="mt-2 max-h-52 space-y-2 overflow-auto pr-1">
+                {identities.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500">
+                    暂无身份配置，请先生成一个身份密钥。
+                  </p>
+                ) : (
+                  identities.map((identity) => {
+                    const hasPrivateKey =
+                      identity.authConfig.method === 'privateKey' &&
+                      (identity.authConfig.privateKey?.trim().length ?? 0) > 0;
+                    return (
+                      <div
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                        key={identity.id}
+                      >
+                        <p className="text-xs font-medium text-slate-800">
+                          {identity.name} ({identity.username})
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          认证方式：{authMethodLabel(identity.authConfig.method)}
+                        </p>
+                        {hasPrivateKey ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={isExportingKey}
+                              onClick={() => {
+                                void handleExportPrivateKey(identity);
+                              }}
+                              type="button"
+                            >
+                              {isExportingKey ? '导出中...' : '导出私钥'}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-[11px] text-amber-700">
+                            当前身份不是私钥认证，暂无可导出的私钥内容。
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            </section>
+          )}
+
+          {showProfileCategory && (
+            <section
+            className="scroll-mt-20 space-y-3 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-sync"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">私有云同步</h3>
+            <p className="text-xs text-slate-700">
+              这里可查看当前同步状态，并执行连接账号、立即拉取和退出登录。
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSyncingCloud}
+                onClick={() => {
+                  onOpenCloudAuth();
+                }}
+                type="button"
+              >
+                {cloudSyncSession ? '切换账号' : '连接账号'}
+              </button>
+              <button
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSyncingCloud || !cloudSyncSession}
+                onClick={() => {
+                  void syncPullFromCloud({ source: 'manual', force: true })
+                    .then(() => {
+                      const latestError = useHostStore.getState().cloudSyncError;
+                      if (latestError) {
+                        toast.error(latestError);
+                        return;
+                      }
+                      toast.success('已执行云端拉取检查');
+                    })
+                    .catch((error) => {
+                      const fallback = '云端拉取失败，请稍后重试。';
+                      const message = error instanceof Error ? error.message : fallback;
+                      toast.error(message || fallback);
+                    });
+                }}
+                type="button"
+              >
+                立即拉取
+              </button>
+              <button
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSyncingCloud || !cloudSyncSession}
+                onClick={() => {
+                  logoutCloudAccount();
+                  toast.message('已断开私有云同步账号');
+                }}
+                type="button"
+              >
+                退出登录
+              </button>
+              <button
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSyncingCloud || !cloudSyncSession}
+                onClick={() => {
+                  void refreshCloudLicenseStatus();
+                }}
+                type="button"
+              >
+                刷新授权
+              </button>
+            </div>
+
+            {cloudSyncSession ? (
+              <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                <p>已登录：{cloudSyncSession.email}（本地金库版本：v{vaultVersion ?? '-'}）</p>
+                <p className="text-emerald-900/90">同步状态：{syncStatusText}</p>
+                <p className="text-emerald-800/90">同步服务：**</p>
+                <p className="text-emerald-900/90">同步授权：{licenseSummary}</p>
+                {cloudSyncPolicy?.lockSyncDomain ? (
+                  <p className="text-emerald-900/90">
+                    域名策略：已锁定{cloudSyncPolicy.hideSyncDomainInput ? '（并隐藏输入）' : ''}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                当前未登录私有云账号，数据仅保存在本机加密金库。你也可以先“跳过”，后续随时再登录同步。
+              </p>
+            )}
+            {cloudSyncError ? (
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {cloudSyncError}
+              </p>
+            ) : null}
+            {cloudSyncSession && cloudSyncPolicy?.requireActivation !== false && (
+              <div
+                className="rounded-lg border border-[#cad9f8] bg-[#f4f8ff] px-3 py-3"
+                id="settings-sync-license"
+              >
+                <button
+                  className="flex w-full items-center justify-between gap-2 text-left"
+                  onClick={() => {
+                    setIsLicensePanelExpanded((prev) => !prev);
+                  }}
+                  type="button"
+                >
+                  <span className="text-xs font-semibold text-slate-800">同步激活码</span>
+                  <span className="text-[11px] font-medium text-slate-600">
+                    {isLicensePanelExpanded ? '收起' : '展开'}
+                  </span>
+                </button>
+                <p className="mt-1 text-[11px] text-slate-600">
+                  基础同步默认可用；输入购买的激活码可解锁 Pro 功能（如密钥部署等）。
+                </p>
+                {isLicensePanelExpanded && (
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-300"
+                      onChange={(event) => {
+                        setLicenseCodeInput(event.target.value);
+                      }}
+                      placeholder="例如：OT-MONTH-XXXXXXXX-XXXXXXXX"
+                      type="text"
+                      value={licenseCodeInput}
+                    />
+                    <button
+                      className="rounded-lg border border-[#2f6df4] bg-[#2f6df4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#245ad0] disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isActivatingCloudLicense}
+                      onClick={() => {
+                        void activateCloudLicenseCode(licenseCodeInput)
+                          .then(() => {
+                            setLicenseCodeInput('');
+                            void refreshCloudLicenseStatus();
+                          })
+                          .catch((error) => {
+                            const fallback = '激活失败，请稍后重试。';
+                            const message = error instanceof Error ? error.message : fallback;
+                            toast.error(message || fallback);
+                          });
+                      }}
+                      type="button"
+                    >
+                      {isActivatingCloudLicense ? '激活中...' : '激活'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {cloudSyncSession ? (
+              <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-800">账号 2FA（TOTP）</p>
+                  <button
+                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isUpdatingCloud2FA}
+                    onClick={() => {
+                      void refreshCloudUser2FAStatus();
+                    }}
+                    type="button"
+                  >
+                    刷新
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-600">
+                  状态：{cloudUser2FAStatus?.enabled ? '已启用' : '未启用'}
+                  {cloudUser2FAStatus?.enabled ? ` ｜ 恢复码剩余 ${cloudUser2FAStatus.backupCodesRemaining}` : ''}
+                </p>
+
+                {!cloudUser2FAStatus?.enabled ? (
+                  <div className="mt-2 space-y-2">
+                    {!cloudUser2FASetup ? (
+                      <button
+                        className="rounded-lg border border-[#2f6df4] bg-[#2f6df4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#245ad0] disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={isUpdatingCloud2FA}
+                        onClick={() => {
+                          void beginCloudUser2FASetup().catch((error) => {
+                            const fallback = '生成 2FA 密钥失败，请稍后重试。';
+                            const message = error instanceof Error ? error.message : fallback;
+                            toast.error(message || fallback);
+                          });
+                        }}
+                        type="button"
+                      >
+                        {isUpdatingCloud2FA ? '生成中...' : '开始启用 2FA'}
+                      </button>
+                    ) : (
+                      <div className="space-y-2 rounded-lg border border-violet-300 bg-white px-3 py-2">
+                        <p className="text-[11px] text-slate-700">TOTP 密钥：{cloudUser2FASetup.secret}</p>
+                        <p className="text-[11px] text-slate-700">otpauth URI：{cloudUser2FASetup.otpauthUri}</p>
+                        <input
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-300"
+                          onChange={(event) => {
+                            setCloud2FAEnableOtpInput(event.target.value);
+                          }}
+                          placeholder="认证器当前 6 位验证码"
+                          type="text"
+                          value={cloud2FAEnableOtpInput}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            className="rounded-lg border border-[#2f6df4] bg-[#2f6df4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#245ad0] disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isUpdatingCloud2FA}
+                            onClick={() => {
+                              void confirmEnableCloudUser2FA(cloud2FAEnableOtpInput)
+                                .then(() => {
+                                  setCloud2FAEnableOtpInput('');
+                                })
+                                .catch((error) => {
+                                  const fallback = '启用 2FA 失败，请稍后重试。';
+                                  const message = error instanceof Error ? error.message : fallback;
+                                  toast.error(message || fallback);
+                                });
+                            }}
+                            type="button"
+                          >
+                            {isUpdatingCloud2FA ? '启用中...' : '确认启用'}
+                          </button>
+                          <button
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            disabled={isUpdatingCloud2FA}
+                            onClick={() => {
+                              setCloud2FAEnableOtpInput('');
+                            }}
+                            type="button"
+                          >
+                            清空验证码
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-300"
+                      onChange={(event) => {
+                        setCloud2FADisableOtpInput(event.target.value);
+                      }}
+                      placeholder="关闭 2FA：输入当前验证码（优先）"
+                      type="text"
+                      value={cloud2FADisableOtpInput}
+                    />
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-300"
+                      onChange={(event) => {
+                        setCloud2FADisableBackupInput(event.target.value);
+                      }}
+                      placeholder="或输入恢复码（例如 ABCD-1234）"
+                      type="text"
+                      value={cloud2FADisableBackupInput}
+                    />
+                    <button
+                      className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isUpdatingCloud2FA}
+                      onClick={() => {
+                        void disableCloudUser2FA({
+                          otpCode: cloud2FADisableOtpInput,
+                          backupCode: cloud2FADisableBackupInput
+                        })
+                          .then(() => {
+                            setCloud2FADisableOtpInput('');
+                            setCloud2FADisableBackupInput('');
+                          })
+                          .catch((error) => {
+                            const fallback = '关闭 2FA 失败，请稍后重试。';
+                            const message = error instanceof Error ? error.message : fallback;
+                            toast.error(message || fallback);
+                          });
+                      }}
+                      type="button"
+                    >
+                      {isUpdatingCloud2FA ? '处理中...' : '关闭 2FA'}
+                    </button>
+                  </div>
+                )}
+
+                {cloudUser2FABackupCodes.length > 0 ? (
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold text-amber-800">恢复码（仅本次展示）</p>
+                    <p className="mt-1 text-[11px] text-amber-700">
+                      {cloudUser2FABackupCodes.join('  ')}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            </section>
+          )}
+
+          {showProfileCategory && (
+            <section
+            className="scroll-mt-20 space-y-3 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-devices"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-800">账号 · 登录设备管理</h3>
+              <button
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!cloudSyncSession || isLoadingCloudDevices}
+                onClick={() => {
+                  void loadCloudDevices();
+                }}
+                type="button"
+              >
+                {isLoadingCloudDevices ? '加载中...' : '刷新列表'}
+              </button>
+            </div>
+            {!cloudSyncSession ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                请先在上方登录私有云账号，才能查看设备列表。
+              </p>
+            ) : (
+              <>
+                <div className="max-h-56 space-y-2 overflow-auto pr-1">
+                  {cloudDevices.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500">
+                      暂无设备记录。
+                    </p>
+                  ) : (
+                    cloudDevices.map((device) => (
+                      <div
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                        key={device.id}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-slate-800">
+                            {device.deviceName} - {device.deviceLocation} -{' '}
+                            {formatRelativeOnline(device.lastSeenAt)}
+                          </p>
+                          {device.isCurrent ? (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              当前设备
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-500">{device.userAgent}</p>
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isLoadingCloudDevices}
+                            onClick={() => {
+                              void revokeCloudDevice(device.id).catch((error) => {
+                                const fallback = '退出设备失败，请稍后重试。';
+                                const message = error instanceof Error ? error.message : fallback;
+                                toast.error(message || fallback);
+                              });
+                            }}
+                            type="button"
+                          >
+                            {device.isCurrent ? '退出当前设备' : '退出此设备'}
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <button
+                  className="rounded-lg border border-rose-400 bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isLoadingCloudDevices || cloudDevices.length === 0}
+                  onClick={() => {
+                    void revokeAllCloudDevices().catch((error) => {
+                      const fallback = '退出所有设备失败，请稍后重试。';
+                      const message = error instanceof Error ? error.message : fallback;
+                      toast.error(message || fallback);
+                    });
+                  }}
+                  type="button"
+                >
+                  退出所有设备
+                </button>
+              </>
+            )}
+            </section>
+          )}
+
+          {showOtherCategory && (
+            <section
+            className="scroll-mt-20 space-y-2 rounded-2xl bg-white/84 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70"
+            id="settings-about"
+          >
+            <h3 className="text-sm font-semibold text-slate-800">关于</h3>
+            <p className="text-xs text-slate-700">查看版本信息、开源致谢与新版本下载提示。</p>
+            <button
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              onClick={onOpenAbout}
+              type="button"
+            >
+              关于轨连终端
+            </button>
+            </section>
+          )}
+
+          {!showProfileCategory && !showSettingsCategory && !showFilesCategory && !showOtherCategory && (
+            <p className="rounded-lg border border-dashed border-slate-300 bg-white/70 px-3 py-2 text-xs text-slate-500">
+              未识别分类，请重新选择。
+            </p>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
