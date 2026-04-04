@@ -16,5 +16,17 @@
     }
   },
   "macSha256": "1a9876f7b638b2a97f1616049556af26b0e553b7d932247f782df76ba4d92f1e",
-  "macSha256X64": "3fd26c010fe53b196552d54d97cc571c05ed8539d010ec7480d747e87d4a6560"
+  "macSha256X64": "3fd26c010fe53b196552d54d97cc571c05ed8539d010ec7480d747e87d4a6560",
+  "linuxPackage": "OrbitTerm_0.1.82_amd64.deb",
+  "linuxSha256": "d76cceb393dbcd90f853dee4781b0c16abece98b95202cb6db8e15e9af1bc2f1",
+  "linuxPackages": {
+    "deb": {
+      "file": "OrbitTerm_0.1.82_amd64.deb",
+      "sha256": "d76cceb393dbcd90f853dee4781b0c16abece98b95202cb6db8e15e9af1bc2f1"
+    },
+    "rpm": {
+      "file": "OrbitTerm-0.1.82-1.x86_64.rpm",
+      "sha256": "1f4b8e1dcff5503c195a9edcff9fbe438b45719ab06c2dff38e9227caf82f358"
+    }
+  }
 }
