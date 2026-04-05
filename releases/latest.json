@@ -40,6 +40,6 @@
   "macDownloadUrl": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_aarch64.dmg",
   "macDownloadUrlX64": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_x64.dmg",
   "linuxDownloadUrl": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_amd64.deb",
-  "androidDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.84/OrbitTerm_0.1.84_android-universal.apk",
+  "androidDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/797f4e3da4093e82b44169a6ab2b62f5a38e9fd0/releases/v0.1.84/OrbitTerm_0.1.84_android-universal.apk",
   "androidSha256": "b8c676374a4c6d7a34fc7d1e357020e78eaf49672d51e523724f1d47508bcce9"
 }
