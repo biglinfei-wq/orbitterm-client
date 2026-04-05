@@ -1,0 +1,7 @@
+c604cd28656a54650cd1427d92ee84ecb1f345c32d8b12a61b4aba5f4aca1ea8  ./OrbitTerm_0.1.83_x64-setup.exe
+c2ec6f30c425789a9ba2b8fcfc9aff337ff8e87eb5ca2b6a169d1ddb06203f40  ./OrbitTerm_0.1.83_x64_en-US.msi
+66f4f07a45cf0fc7b34a73bca9cd5f55a890012bc0e85f383e2c41fde1106534  ./OrbitTerm_0.1.83_aarch64.dmg
+2dfafc91e63455112e1b7c1f53f96731e4598103e7b40d43bcfd3d4b08c84bd3  ./OrbitTerm_0.1.83_x64.dmg
+3d6a8979e04162e59e450b96e2129b96db6eb364985f8a6e810b6aefa002c63f  ./OrbitTerm_0.1.83_amd64.deb
+1b81dcd92e995f784735b7009a0b5bb7714b3d0cc6fdafbf6635b4485ad8bf47  ./OrbitTerm-0.1.83-1.x86_64.rpm
+6e2c05f41a391502c335836677169ad5842cb4997c1fee5e26592bb46def7552  ./OrbitTerm_0.1.83_android-universal-debug.apk
