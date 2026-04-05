@@ -2,5 +2,5 @@ c604cd28656a54650cd1427d92ee84ecb1f345c32d8b12a61b4aba5f4aca1ea8  ./OrbitTerm_0.
 c2ec6f30c425789a9ba2b8fcfc9aff337ff8e87eb5ca2b6a169d1ddb06203f40  ./OrbitTerm_0.1.82_x64_en-US.msi
 1a9876f7b638b2a97f1616049556af26b0e553b7d932247f782df76ba4d92f1e  ./OrbitTerm_0.1.82_aarch64.dmg
 3fd26c010fe53b196552d54d97cc571c05ed8539d010ec7480d747e87d4a6560  ./OrbitTerm_0.1.82_x64.dmg
-d76cceb393dbcd90f853dee4781b0c16abece98b95202cb6db8e15e9af1bc2f1  ./OrbitTerm_0.1.82_amd64.deb
-1f4b8e1dcff5503c195a9edcff9fbe438b45719ab06c2dff38e9227caf82f358  ./OrbitTerm-0.1.82-1.x86_64.rpm
+3f7c73c152ce4afc444a71d2fc4543ba2f6b3d35f6de59214f6553cb088de79f  ./OrbitTerm_0.1.82_amd64.deb
+bd5feee7c54c207c24ceb7b5361acef5bb3d3c8f50b0b762a4e21b7ddded0942  ./OrbitTerm-0.1.82-1.x86_64.rpm
