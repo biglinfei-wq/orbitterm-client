@@ -58,6 +58,10 @@ interface OrbitTerminalProps {
   blurPx: number;
   borderColor: string;
   chromePalette: OrbitTerminalChromePalette;
+  disableInteractiveInput?: boolean;
+  allowPaneContextActions?: boolean;
+  hidePaneHeader?: boolean;
+  onCopyActiveOutputReady?: ((copyFn: ((scope?: 'visible' | 'all') => Promise<boolean>) | null) => void) | undefined;
 }
 
 interface TerminalInstanceProps {
@@ -78,6 +82,9 @@ interface TerminalInstanceProps {
   onPaneSessionClosed: (paneId: string, sessionId: string) => void;
   onTerminalError: (message: string) => void;
   onRegisterApi: (paneId: string, api: TerminalInstanceApi | null) => void;
+  disableInteractiveInput: boolean;
+  allowPaneContextActions: boolean;
+  hidePaneHeader: boolean;
 }
 
 interface SshOutputEvent {
@@ -97,6 +104,7 @@ interface SshClosedEvent {
 interface TerminalInstanceApi {
   fit: () => void;
   focus: () => void;
+  copyOutput: (scope?: 'visible' | 'all') => Promise<boolean>;
 }
 
 const OUTPUT_FLUSH_CHARS_PER_FRAME = 40 * 1024;
@@ -116,6 +124,61 @@ const sanitizeTerminalLineHeight = (value: number): number => {
     return MAX_XTERM_LINE_HEIGHT;
   }
   return Math.round(value * 100) / 100;
+};
+
+const collectBufferText = (terminal: Terminal, scope: 'visible' | 'all'): string => {
+  const buffer = terminal.buffer.active;
+  const maxY = buffer.baseY + Math.max(terminal.rows - 1, 0);
+  const startY = scope === 'visible' ? Math.max(0, buffer.viewportY) : 0;
+  const endY = scope === 'visible' ? Math.min(maxY, buffer.viewportY + terminal.rows - 1) : maxY;
+  if (endY < startY) {
+    return '';
+  }
+  const lines: string[] = [];
+  for (let y = startY; y <= endY; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) {
+      continue;
+    }
+    lines.push(line.translateToString(true));
+  }
+  return lines.join('\n').replace(/\u00a0/g, ' ').trimEnd();
+};
+
+const writeClipboardText = async (text: string): Promise<void> => {
+  const normalized = text.trimEnd();
+  if (!normalized) {
+    throw new Error('empty');
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(normalized);
+      return;
+    } catch (_error) {
+      // Fallback to legacy copy API.
+    }
+  }
+
+  if (typeof document === 'undefined') {
+    throw new Error('clipboard unavailable');
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = normalized;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, normalized.length);
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error('clipboard unavailable');
+  }
 };
 
 type OutputSubscriber = (data: string) => void;
@@ -292,7 +355,10 @@ function TerminalInstance({
   onPaneInput,
   onPaneSessionClosed,
   onTerminalError,
-  onRegisterApi
+  onRegisterApi,
+  disableInteractiveInput,
+  allowPaneContextActions,
+  hidePaneHeader
 }: TerminalInstanceProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -328,6 +394,13 @@ function TerminalInstance({
     } as CSSProperties;
   }, [chromePalette]);
   const safeLineHeight = useMemo(() => sanitizeTerminalLineHeight(lineHeight), [lineHeight]);
+  const blurTerminalTextarea = useCallback((): void => {
+    const terminal = terminalRef.current as (Terminal & { textarea?: HTMLTextAreaElement }) | null;
+    const textarea = terminal?.textarea;
+    if (textarea) {
+      textarea.blur();
+    }
+  }, []);
 
   const onPaneSessionClosedRef = useRef(onPaneSessionClosed);
   const onTerminalErrorRef = useRef(onTerminalError);
@@ -349,7 +422,7 @@ function TerminalInstance({
     if (!terminalContextMenu) {
       return;
     }
-    const handlePointerDown = (event: MouseEvent): void => {
+    const handlePointerDown = (event: PointerEvent): void => {
       const root = terminalContextMenuRef.current;
       if (!root) {
         setTerminalContextMenu(null);
@@ -363,9 +436,9 @@ function TerminalInstance({
         setTerminalContextMenu(null);
       }
     };
-    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('pointerdown', handlePointerDown);
     return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [terminalContextMenu]);
 
@@ -387,6 +460,7 @@ function TerminalInstance({
       cursorBlink: true,
       cursorStyle: 'bar',
       customGlyphs: true,
+      disableStdin: disableInteractiveInput,
       drawBoldTextInBrightColors: true,
       fontFamily,
       fontSize,
@@ -421,6 +495,23 @@ function TerminalInstance({
 
     terminal.open(hostRef.current);
     fitAddon.fit();
+    if (disableInteractiveInput) {
+      const textarea = (terminal as Terminal & { textarea?: HTMLTextAreaElement }).textarea;
+      if (textarea) {
+        textarea.readOnly = true;
+        textarea.autocapitalize = 'none';
+        textarea.autocomplete = 'off';
+        textarea.autocorrect = false;
+        textarea.inputMode = 'none';
+        textarea.spellcheck = false;
+        textarea.tabIndex = -1;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.opacity = '0';
+        textarea.style.pointerEvents = 'none';
+        textarea.blur();
+      }
+    }
 
     const pushResize = (): void => {
       const cols = terminal.cols;
@@ -438,7 +529,22 @@ function TerminalInstance({
         fitAddon.fit();
       },
       focus: () => {
+        if (disableInteractiveInput) {
+          return;
+        }
         terminal.focus();
+      },
+      copyOutput: async (scope: 'visible' | 'all' = 'visible') => {
+        try {
+          const normalized = collectBufferText(terminal, scope).replace(/\r\n/g, '\n');
+          if (!normalized) {
+            return false;
+          }
+          await writeClipboardText(normalized);
+          return true;
+        } catch (_error) {
+          return false;
+        }
       }
     };
     onRegisterApi(pane.id, instanceApi);
@@ -604,7 +710,7 @@ function TerminalInstance({
       terminalRef.current = null;
       terminal.dispose();
     };
-  }, [onRegisterApi, pane.id, pane.sessionId]);
+  }, [disableInteractiveInput, onRegisterApi, pane.id, pane.sessionId]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -616,11 +722,16 @@ function TerminalInstance({
     terminal.options.fontSize = fontSize;
     terminal.options.lineHeight = safeLineHeight;
     terminal.options.theme = theme;
+    terminal.options.disableStdin = disableInteractiveInput;
     fitAddonRef.current?.fit();
-  }, [fontFamily, fontSize, safeLineHeight, theme]);
+  }, [disableInteractiveInput, fontFamily, fontSize, safeLineHeight, theme]);
 
   useEffect(() => {
     if (!isFocused) {
+      return;
+    }
+
+    if (disableInteractiveInput) {
       return;
     }
 
@@ -638,6 +749,9 @@ function TerminalInstance({
     if (!isFocused) {
       return;
     }
+    if (disableInteractiveInput) {
+      return;
+    }
     const handleWindowFocus = (): void => {
       window.requestAnimationFrame(() => {
         terminalRef.current?.focus();
@@ -647,7 +761,7 @@ function TerminalInstance({
     return () => {
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [isFocused]);
+  }, [disableInteractiveInput, isFocused]);
 
   const handleTerminalContextMenuAction = useCallback(
     async (action: 'copy' | 'cut' | 'paste' | 'selectAll'): Promise<void> => {
@@ -662,6 +776,10 @@ function TerminalInstance({
           return;
         }
         if (action === 'paste') {
+          if (disableInteractiveInput) {
+            onTerminalErrorRef.current('移动端已禁用终端直接输入，请使用下方预输入栏。');
+            return;
+          }
           const clipboardText = await navigator.clipboard.readText();
           if (clipboardText) {
             onPaneInputRef.current(pane.sessionId, clipboardText);
@@ -680,18 +798,32 @@ function TerminalInstance({
         onTerminalErrorRef.current('剪贴板访问失败，请检查系统权限。');
       }
     },
-    [pane.sessionId]
+    [disableInteractiveInput, pane.sessionId]
   );
 
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl p-1.5"
-      onMouseDown={() => {
+      onPointerDown={() => {
         onFocusPane(pane.id);
-        terminalRef.current?.focus();
+        if (!disableInteractiveInput) {
+          terminalRef.current?.focus();
+        } else {
+          window.setTimeout(() => {
+            blurTerminalTextarea();
+          }, 0);
+        }
         if (terminalContextMenu) {
           setTerminalContextMenu(null);
         }
+      }}
+      onTouchStart={() => {
+        if (!disableInteractiveInput) {
+          return;
+        }
+        window.setTimeout(() => {
+          blurTerminalTextarea();
+        }, 0);
       }}
       style={{
         ...chromeVars,
@@ -700,35 +832,44 @@ function TerminalInstance({
           : chromePalette.paneBackgroundIdle
       }}
     >
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <button
-          className="min-w-0 max-w-[240px] truncate rounded-md px-2 py-1 text-[11px] ring-1"
-          onClick={() => {
-            onFocusPane(pane.id);
-          }}
-          onContextMenu={(event) => {
-            onPaneContextMenu(event, pane.id);
-          }}
-          title={pane.title}
-          style={
-            isFocused
-              ? {
-                  background: 'var(--ot-term-title-active-bg)',
-                  color: 'var(--ot-term-title-active-text)',
-                  boxShadow: 'inset 0 0 0 1px var(--ot-term-title-active-ring)'
-                }
-              : {
-                  background: 'var(--ot-term-title-idle-bg)',
-                  color: 'var(--ot-term-title-idle-text)',
-                  boxShadow: 'inset 0 0 0 1px var(--ot-term-title-idle-ring)'
-                }
-          }
-          type="button"
-        >
-          {pane.title}
-        </button>
-        <span className="text-[10px] text-[color:var(--ot-term-hint-text)]">右键标题分屏</span>
-      </div>
+      {!hidePaneHeader && (
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <button
+            className="min-w-0 max-w-[240px] truncate rounded-md px-2 py-1 text-[11px] ring-1"
+            onClick={() => {
+              onFocusPane(pane.id);
+            }}
+            onContextMenu={(event) => {
+              if (!allowPaneContextActions) {
+                return;
+              }
+              onPaneContextMenu(event, pane.id);
+            }}
+            title={pane.title}
+            style={
+              isFocused
+                ? {
+                    background: 'var(--ot-term-title-active-bg)',
+                    color: 'var(--ot-term-title-active-text)',
+                    boxShadow: 'inset 0 0 0 1px var(--ot-term-title-active-ring)'
+                  }
+                : {
+                    background: 'var(--ot-term-title-idle-bg)',
+                    color: 'var(--ot-term-title-idle-text)',
+                    boxShadow: 'inset 0 0 0 1px var(--ot-term-title-idle-ring)'
+                  }
+            }
+            type="button"
+          >
+            {pane.title}
+          </button>
+          {allowPaneContextActions ? (
+            <span className="text-[10px] text-[color:var(--ot-term-hint-text)]">右键标题分屏</span>
+          ) : (
+            <span className="text-[10px] text-[color:var(--ot-term-hint-text)]">移动端已关闭分屏</span>
+          )}
+        </div>
+      )}
       <div className="min-h-0 flex-1">
         <div
           className="orbitterm-xterm-host h-full min-h-[120px] w-full rounded-xl p-2"
@@ -743,6 +884,14 @@ function TerminalInstance({
             });
           }}
           ref={hostRef}
+          onTouchStart={() => {
+            if (!disableInteractiveInput) {
+              return;
+            }
+            window.setTimeout(() => {
+              blurTerminalTextarea();
+            }, 0);
+          }}
           style={{
             background: toRgba(surfaceHex, surfaceOpacity / 100),
             backdropFilter: `blur(${blurPx}px)`,
@@ -754,7 +903,7 @@ function TerminalInstance({
       {terminalContextMenu && (
         <div
           className="fixed z-[150] min-w-[140px] rounded-lg border bg-[var(--ot-term-menu-bg)] p-1.5 shadow-2xl backdrop-blur"
-          onMouseDown={(event) => {
+          onPointerDown={(event) => {
             event.stopPropagation();
           }}
           ref={terminalContextMenuRef}
@@ -833,7 +982,11 @@ export function OrbitTerminal({
   surfaceOpacity,
   blurPx,
   borderColor,
-  chromePalette
+  chromePalette,
+  disableInteractiveInput = false,
+  allowPaneContextActions = true,
+  hidePaneHeader = false,
+  onCopyActiveOutputReady
 }: OrbitTerminalProps): JSX.Element {
   const terminalApiMapRef = useRef<Map<string, TerminalInstanceApi>>(new Map());
   const fitRafRef = useRef<number>(0);
@@ -856,6 +1009,14 @@ export function OrbitTerminal({
       fitAllTerminals();
     });
   }, [fitAllTerminals]);
+
+  const copyActiveOutput = useCallback(async (scope: 'visible' | 'all' = 'visible'): Promise<boolean> => {
+    const activeApi = terminalApiMapRef.current.get(activePaneId);
+    if (!activeApi) {
+      return false;
+    }
+    return activeApi.copyOutput(scope);
+  }, [activePaneId]);
 
   const registerApi = useCallback((paneId: string, api: TerminalInstanceApi | null): void => {
     if (!api) {
@@ -903,6 +1064,16 @@ export function OrbitTerminal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!onCopyActiveOutputReady) {
+      return;
+    }
+    onCopyActiveOutputReady(copyActiveOutput);
+    return () => {
+      onCopyActiveOutputReady(null);
+    };
+  }, [copyActiveOutput, onCopyActiveOutputReady]);
+
   const renderNode = (node: TerminalLayoutNode): JSX.Element => {
     if (node.type === 'pane') {
       return (
@@ -921,6 +1092,9 @@ export function OrbitTerminal({
           onPaneSessionClosed={onPaneSessionClosed}
           onRegisterApi={registerApi}
           onTerminalError={onTerminalError}
+          disableInteractiveInput={disableInteractiveInput}
+          allowPaneContextActions={allowPaneContextActions}
+          hidePaneHeader={hidePaneHeader}
           pane={node.pane}
           surfaceHex={surfaceHex}
           surfaceOpacity={surfaceOpacity}

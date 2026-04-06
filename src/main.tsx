@@ -10,6 +10,7 @@ import '@fontsource/source-code-pro/latin-400.css';
 import '@fontsource/source-code-pro/latin-600.css';
 import '@fontsource/inconsolata/latin-400.css';
 import '@fontsource/inconsolata/latin-600.css';
+import 'sonner/dist/styles.css';
 import App from './App';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import './index.css';

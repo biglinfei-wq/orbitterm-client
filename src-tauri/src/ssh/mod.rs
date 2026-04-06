@@ -12,7 +12,7 @@ use russh::keys::{decode_openssh, PrivateKeyWithHashAlg};
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::{error::Error as SftpError, SftpSession};
 use russh_sftp::protocol::{FileType, OpenFlags, StatusCode};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -253,7 +253,7 @@ impl SshSessionRegistry {
                                     session_id: loop_session_id.clone(),
                                     data: String::from_utf8_lossy(&data).to_string(),
                                 };
-                                if app_for_loop.emit_all("ssh-output", payload).is_err() {
+                                if app_for_loop.emit("ssh-output", payload).is_err() {
                                     break;
                                 }
                             }
@@ -262,7 +262,7 @@ impl SshSessionRegistry {
                                     session_id: loop_session_id.clone(),
                                     data: String::from_utf8_lossy(&data).to_string(),
                                 };
-                                if app_for_loop.emit_all("ssh-output", payload).is_err() {
+                                if app_for_loop.emit("ssh-output", payload).is_err() {
                                     break;
                                 }
                             }
@@ -296,7 +296,7 @@ impl SshSessionRegistry {
             registry.remove_session(&loop_session_id).await;
 
             if !has_error {
-                let _ = app_for_loop.emit_all(
+                let _ = app_for_loop.emit(
                     "ssh-closed",
                     SshClosedEvent {
                         session_id: loop_session_id,
@@ -778,7 +778,7 @@ impl SshSessionRegistry {
             .clone()
             .unwrap_or_else(|| format!("download:{}:{}", request.local_path, request.remote_path));
 
-        let _ = app.emit_all(
+        let _ = app.emit(
             "sftp-transfer-progress",
             SftpTransferProgressEvent {
                 session_id: request.session_id.clone(),
@@ -815,7 +815,7 @@ impl SshSessionRegistry {
             };
             if progress != emitted_progress {
                 emitted_progress = progress;
-                let _ = app.emit_all(
+                let _ = app.emit(
                     "sftp-transfer-progress",
                     SftpTransferProgressEvent {
                         session_id: request.session_id.clone(),
@@ -837,7 +837,7 @@ impl SshSessionRegistry {
             .map_err(|err| SshBackendError::SftpOperation(format!("刷新本地文件失败：{err}")))?;
 
         if emitted_progress < 100 {
-            let _ = app.emit_all(
+            let _ = app.emit(
                 "sftp-transfer-progress",
                 SftpTransferProgressEvent {
                     session_id: request.session_id.clone(),
@@ -955,7 +955,7 @@ impl SshSessionRegistry {
             let transferred = decoded.len() as u64;
             let total_bytes = transferred;
             let local_path_for_event = request.local_path.clone().unwrap_or_default();
-            let _ = app.emit_all(
+            let _ = app.emit(
                 "sftp-transfer-progress",
                 SftpTransferProgressEvent {
                     session_id: request.session_id.clone(),
@@ -1031,7 +1031,7 @@ impl SshSessionRegistry {
             } else {
                 ((transferred.saturating_mul(100) / total_size).min(100)) as u8
             };
-            let _ = app.emit_all(
+            let _ = app.emit(
                 "sftp-transfer-progress",
                 SftpTransferProgressEvent {
                     session_id: request.session_id.clone(),
@@ -1069,7 +1069,7 @@ impl SshSessionRegistry {
                 };
                 if progress != emitted_progress {
                     emitted_progress = progress;
-                    let _ = app.emit_all(
+                    let _ = app.emit(
                         "sftp-upload-progress",
                         SftpTransferProgressEvent {
                             session_id: request.session_id.clone(),
@@ -1082,7 +1082,7 @@ impl SshSessionRegistry {
                             progress,
                         },
                     );
-                    let _ = app.emit_all(
+                    let _ = app.emit(
                         "sftp-transfer-progress",
                         SftpTransferProgressEvent {
                             session_id: request.session_id.clone(),
@@ -1099,7 +1099,7 @@ impl SshSessionRegistry {
             }
 
             if emitted_progress < 100 {
-                let _ = app.emit_all(
+                let _ = app.emit(
                     "sftp-upload-progress",
                     SftpTransferProgressEvent {
                         session_id: request.session_id.clone(),
@@ -1112,7 +1112,7 @@ impl SshSessionRegistry {
                         progress: 100,
                     },
                 );
-                let _ = app.emit_all(
+                let _ = app.emit(
                     "sftp-transfer-progress",
                     SftpTransferProgressEvent {
                         session_id: request.session_id.clone(),
@@ -1297,7 +1297,7 @@ impl SshSessionRegistry {
                     build_sys_status(&sample.snapshot, previous.as_ref(), elapsed, merged_latency);
                 previous = Some(sample.snapshot);
                 previous_at = Some(now);
-                let _ = app.emit_all(
+                let _ = app.emit(
                     "ssh-sys-status",
                     SshSysStatusEvent {
                         session_id: session_id.clone(),
@@ -2523,7 +2523,7 @@ fn emit_diagnostic_log(
         timestamp: now_unix_ts(),
     };
 
-    let _ = app.emit_all("ssh-diagnostic", payload);
+    let _ = app.emit("ssh-diagnostic", payload);
 }
 
 fn now_unix_ts() -> i64 {
@@ -2540,7 +2540,7 @@ fn emit_error(app: &AppHandle, session_id: Option<String>, err: SshBackendError)
         message: err.user_message(),
     };
 
-    let _ = app.emit_all("ssh-error", payload);
+    let _ = app.emit("ssh-error", payload);
 }
 
 pub fn pty_backend_name() -> &'static str {

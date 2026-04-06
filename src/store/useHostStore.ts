@@ -53,6 +53,8 @@ import {
 import { type ProxyJumpHop, sshConnect, sshDisconnect } from '../services/ssh';
 import { buildHostKey } from '../utils/hostKey';
 import { logAppError, logAppInfo, logAppWarn } from '../services/appLog';
+import { useUiSettingsStore } from './useUiSettingsStore';
+import { saveBiometricMasterPassword } from '../services/mobileBiometric';
 
 type WizardStep = 1 | 2 | 3;
 type AppView = 'locked' | 'dashboard';
@@ -968,6 +970,14 @@ export const useHostStore = create<HostState>((set, get) => ({
       });
       if (normalized.discarded > 0) {
         toast.warning(`检测到 ${normalized.discarded} 条异常配置，已自动忽略。`);
+      }
+
+      if (useUiSettingsStore.getState().mobileBiometricEnabled) {
+        void saveBiometricMasterPassword(masterPassword).catch((error) => {
+          logAppWarn('vault', '保存生物识别解锁凭据失败', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
       }
 
       if (cloudSession) {
@@ -2170,7 +2180,7 @@ export const useHostStore = create<HostState>((set, get) => ({
         vaultUpdatedAt: saveResult.updatedAt
       });
       scheduleCloudPush(get);
-      toast.success(`已添加指令：${snippet.title}`);
+      toast.success(`已添加指令：${snippet.title}（已加入同步队列）`);
     } catch (error) {
       const fallback = '指令已添加到当前会话，但写入本地金库失败。';
       const message = extractErrorMessage(error, fallback);
@@ -2219,7 +2229,7 @@ export const useHostStore = create<HostState>((set, get) => ({
         vaultUpdatedAt: saveResult.updatedAt
       });
       scheduleCloudPush(get);
-      toast.success(`已更新指令：${nextSnippet.title}`);
+      toast.success(`已更新指令：${nextSnippet.title}（已加入同步队列）`);
     } catch (error) {
       const fallback = '指令已更新到当前会话，但写入本地金库失败。';
       const message = extractErrorMessage(error, fallback);
@@ -2253,7 +2263,7 @@ export const useHostStore = create<HostState>((set, get) => ({
         vaultUpdatedAt: saveResult.updatedAt
       });
       scheduleCloudPush(get);
-      toast.success(`已删除指令：${target.title}`);
+      toast.success(`已删除指令：${target.title}（已加入同步队列）`);
     } catch (error) {
       const fallback = '指令已从当前会话移除，但写入本地金库失败。';
       const message = extractErrorMessage(error, fallback);

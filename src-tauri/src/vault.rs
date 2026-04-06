@@ -7,7 +7,7 @@ use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_S
 use base64::Engine;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use thiserror::Error;
 use tokio::fs;
 use tokio::sync::RwLock;
@@ -629,9 +629,9 @@ async fn load_or_initialize_vault(
 
 async fn resolve_vault_path(app: &AppHandle, filename: &str) -> Result<PathBuf, VaultError> {
     let mut dir = app
-        .path_resolver()
+        .path()
         .app_data_dir()
-        .ok_or(VaultError::AppDataPathUnavailable)?;
+        .map_err(|_| VaultError::AppDataPathUnavailable)?;
 
     fs::create_dir_all(&dir).await.map_err(map_write_io_error)?;
 

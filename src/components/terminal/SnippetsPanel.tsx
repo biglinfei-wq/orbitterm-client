@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import {
   builtinSnippetTemplates,
@@ -19,6 +20,9 @@ interface SnippetsPanelProps {
     payload: { title: string; command: string; tags: string[] }
   ) => Promise<void>;
   onDeleteSnippet: (snippetId: string) => Promise<void>;
+  isMobileView?: boolean;
+  quickKeys?: Array<{ id: string; label: string; payload: string }>;
+  onQuickKeyPress?: (payload: string) => Promise<void>;
 }
 
 interface SnippetFormState {
@@ -37,7 +41,7 @@ interface SnippetListItem {
   category: 'custom' | BuiltinSnippetCategory;
 }
 
-type SnippetLibraryView = BuiltinSnippetCategory | 'custom';
+type SnippetLibraryView = BuiltinSnippetCategory | 'custom' | 'quickkeys';
 
 interface SnippetLocalePack {
   libraryTitle: string;
@@ -52,6 +56,8 @@ interface SnippetLocalePack {
   runAction: string;
   copyAction: string;
   copyLoading: string;
+  clearSearchAction: string;
+  quickKeyExecuteAction: string;
   deleteAction: string;
   editorExpand: string;
   editorCollapse: string;
@@ -93,6 +99,7 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
       debian: { label: 'Debian', desc: '服务与日志巡检' },
       alpine: { label: 'Alpine', desc: '轻量系统运维' },
       huawei: { label: 'Huawei', desc: '交换机/路由器' },
+      quickkeys: { label: '组合键', desc: '终端控制按键集合' },
       custom: { label: '我的指令', desc: '自定义命令库' }
     },
     searchPlaceholder: '搜索 {{label}} 指令（标题/命令/标签）',
@@ -103,6 +110,8 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
     runAction: '执行',
     copyAction: '复制到我的',
     copyLoading: '复制中...',
+    clearSearchAction: '清空筛选',
+    quickKeyExecuteAction: '执行',
     deleteAction: '删除',
     editorExpand: '展开我的指令编辑器',
     editorCollapse: '收起我的指令编辑器',
@@ -136,6 +145,7 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
       debian: { label: 'Debian', desc: '服務與日誌巡檢' },
       alpine: { label: 'Alpine', desc: '輕量系統運維' },
       huawei: { label: 'Huawei', desc: '交換機/路由器' },
+      quickkeys: { label: '組合鍵', desc: '終端控制按鍵集合' },
       custom: { label: '我的指令', desc: '自訂命令庫' }
     },
     searchPlaceholder: '搜尋 {{label}} 指令（標題/命令/標籤）',
@@ -146,6 +156,8 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
     runAction: '執行',
     copyAction: '複製到我的',
     copyLoading: '複製中...',
+    clearSearchAction: '清空篩選',
+    quickKeyExecuteAction: '執行',
     deleteAction: '刪除',
     editorExpand: '展開我的指令編輯器',
     editorCollapse: '收起我的指令編輯器',
@@ -179,6 +191,7 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
       debian: { label: 'Debian', desc: 'Service and logs' },
       alpine: { label: 'Alpine', desc: 'Lightweight environments' },
       huawei: { label: 'Huawei', desc: 'Switches/Routers' },
+      quickkeys: { label: 'Hotkeys', desc: 'Terminal control key set' },
       custom: { label: 'My Snippets', desc: 'Custom command library' }
     },
     searchPlaceholder: 'Search {{label}} snippets (title/command/tag)',
@@ -189,6 +202,8 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
     runAction: 'Run',
     copyAction: 'Copy to Mine',
     copyLoading: 'Copying...',
+    clearSearchAction: 'Clear Filter',
+    quickKeyExecuteAction: 'Send',
     deleteAction: 'Delete',
     editorExpand: 'Expand my snippet editor',
     editorCollapse: 'Collapse my snippet editor',
@@ -222,6 +237,7 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
       debian: { label: 'Debian', desc: 'サービスとログ確認' },
       alpine: { label: 'Alpine', desc: '軽量環境の運用' },
       huawei: { label: 'Huawei', desc: 'スイッチ/ルーター' },
+      quickkeys: { label: 'キー操作', desc: '端末制御キーセット' },
       custom: { label: 'マイスニペット', desc: 'カスタムコマンド集' }
     },
     searchPlaceholder: '{{label}} スニペットを検索（タイトル/コマンド/タグ）',
@@ -232,6 +248,8 @@ const SNIPPET_LOCALE_PACKS: Record<AppLanguage, SnippetLocalePack> = {
     runAction: '実行',
     copyAction: 'マイにコピー',
     copyLoading: 'コピー中...',
+    clearSearchAction: 'フィルター解除',
+    quickKeyExecuteAction: '送信',
     deleteAction: '削除',
     editorExpand: 'マイスニペット編集を展開',
     editorCollapse: 'マイスニペット編集を折りたたむ',
@@ -280,6 +298,15 @@ const previewCommand = (command: string): string => {
   return `${trimmed.slice(0, 64)}...`;
 };
 
+const describeQuickKey = (payload: string): string => {
+  const normalized = payload.replace(/\r?\n/g, '\\n');
+  const escaped = normalized.replace(/\u0003/g, '^C').replace(/\u001a/g, '^Z').replace(/\u001b/g, 'Esc');
+  if (escaped.length <= 42) {
+    return escaped;
+  }
+  return `${escaped.slice(0, 42)}...`;
+};
+
 export function SnippetsPanel({
   snippets,
   hasActiveSession,
@@ -287,7 +314,10 @@ export function SnippetsPanel({
   onRunSnippet,
   onCreateSnippet,
   onUpdateSnippet,
-  onDeleteSnippet
+  onDeleteSnippet,
+  isMobileView = false,
+  quickKeys = [],
+  onQuickKeyPress
 }: SnippetsPanelProps): JSX.Element | null {
   const collapsed = useUiSettingsStore((state) => state.snippetsPanelCollapsed);
   const setCollapsed = useUiSettingsStore((state) => state.setSnippetsPanelCollapsed);
@@ -314,6 +344,10 @@ export function SnippetsPanel({
       ),
     [uiText]
   );
+  const availableViewOptions = useMemo(
+    () => viewOptions.filter((item) => item.id !== 'quickkeys' || quickKeys.length > 0),
+    [quickKeys.length, viewOptions]
+  );
 
   const customItems = useMemo<SnippetListItem[]>(() => {
     return snippets.map((snippet) => ({
@@ -339,7 +373,7 @@ export function SnippetsPanel({
   }, []);
 
   const filteredBuiltinItems = useMemo(() => {
-    if (activeView === 'custom') {
+    if (activeView === 'custom' || activeView === 'quickkeys') {
       return [];
     }
     const query = search.trim().toLowerCase();
@@ -356,6 +390,12 @@ export function SnippetsPanel({
       return searchable.includes(query);
     });
   }, [activeView, builtinItems, search]);
+  const activeBuiltinTotal = useMemo(() => {
+    if (activeView === 'custom' || activeView === 'quickkeys') {
+      return 0;
+    }
+    return builtinItems.filter((item) => item.category === activeView).length;
+  }, [activeView, builtinItems]);
 
   const filteredCustomItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -367,6 +407,31 @@ export function SnippetsPanel({
       return searchable.includes(query);
     });
   }, [customItems, search]);
+
+  useEffect(() => {
+    setSearch('');
+  }, [activeView]);
+  useEffect(() => {
+    if (!collapsed) {
+      setSearch('');
+    }
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (activeView === 'quickkeys' && quickKeys.length === 0) {
+      setActiveView('ubuntu');
+    }
+  }, [activeView, quickKeys.length]);
+  useEffect(() => {
+    if (availableViewOptions.some((item) => item.id === activeView)) {
+      return;
+    }
+    const fallback = availableViewOptions[0];
+    if (!fallback) {
+      return;
+    }
+    setActiveView(fallback.id);
+  }, [activeView, availableViewOptions]);
 
   const editingSnippet = useMemo(() => {
     if (!editingId) {
@@ -458,18 +523,15 @@ export function SnippetsPanel({
     }
   };
 
-  const handleRunSnippet = async (
-    snippet: Pick<SnippetListItem, 'id' | 'title' | 'command'>,
-    autoEnter: boolean
-  ): Promise<void> => {
+  const handleRunSnippet = async (snippet: Pick<SnippetListItem, 'id' | 'title' | 'command'>): Promise<void> => {
     if (!hasActiveSession) {
       toast.error(uiText.toastNeedSession);
       return;
     }
     setRunningSnippetId(snippet.id);
     try {
-      await onRunSnippet(snippet.command, autoEnter);
-      toast.success(`${autoEnter ? uiText.toastRunPrefix : uiText.toastFilledPrefix}${snippet.title}`);
+      await onRunSnippet(snippet.command, false);
+      toast.success(`${uiText.toastFilledPrefix}${snippet.title}`);
     } catch (error) {
       const fallback = uiText.toastWriteFailed;
       const message = error instanceof Error ? error.message : fallback;
@@ -505,13 +567,18 @@ export function SnippetsPanel({
   }
 
   const showCustom = activeView === 'custom';
+  const showQuickKeys = activeView === 'quickkeys';
   const displayItems = showCustom ? filteredCustomItems : filteredBuiltinItems;
   const currentViewLabel = uiText.viewOptions[activeView].label;
   const searchPlaceholder = uiText.searchPlaceholder.replace('{{label}}', currentViewLabel);
+  const panelLayoutClass = isMobileView
+    ? 'inset-x-2 top-[calc(env(safe-area-inset-top)+3.5rem)] bottom-[calc(env(safe-area-inset-bottom)+6.4rem)] w-auto'
+    : 'right-3 bottom-20 h-[min(560px,calc(100%-7.6rem))] w-[356px]';
+  const panelPositionClass = isMobileView ? 'fixed' : 'absolute';
 
-  return (
+  const panel = (
     <aside
-      className={`absolute bottom-20 right-3 z-20 flex h-[min(560px,calc(100%-7.6rem))] w-[356px] flex-col overflow-hidden rounded-2xl border border-[#314f77] bg-[#0b1320]/95 shadow-xl backdrop-blur ${
+      className={`${panelPositionClass} z-[240] flex flex-col overflow-hidden rounded-2xl border border-[#314f77] bg-[#0b1320]/95 shadow-xl backdrop-blur ${panelLayoutClass} ${
         className ?? ''
       }`}
     >
@@ -533,7 +600,7 @@ export function SnippetsPanel({
 
       <div className="space-y-2 border-b border-[#223754] p-3">
         <div className="grid grid-cols-2 gap-1.5">
-          {viewOptions.map((option) => {
+          {availableViewOptions.map((option) => {
             const active = option.id === activeView;
             return (
               <button
@@ -565,10 +632,50 @@ export function SnippetsPanel({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
-        {displayItems.length === 0 ? (
+      <div
+        className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 pb-6 pt-3 touch-pan-y"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        {showQuickKeys ? (
+          <div className="space-y-2">
+            {quickKeys.map((item) => (
+              <article className="rounded-xl border border-[#2f486e] bg-[#0e1a2b] p-3" key={item.id}>
+                <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-[#d8e6ff]">{item.label}</p>
+                <button
+                  className="rounded-md border border-[#4d6f9f] bg-[#13253f] px-2 py-1 text-[11px] text-[#d6e6ff] hover:bg-[#183255]"
+                    onClick={() => {
+                      if (onQuickKeyPress) {
+                        void onQuickKeyPress(item.payload);
+                      }
+                    }}
+                  type="button"
+                >
+                  {uiText.quickKeyExecuteAction}
+                </button>
+              </div>
+                <p className="mt-1 rounded-md border border-[#274062] bg-[#0b1322] px-2 py-1 text-[11px] text-[#8aa7ca]">
+                  {describeQuickKey(item.payload)}
+                </p>
+              </article>
+            ))}
+          </div>
+        ) : displayItems.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#2f4a70] bg-[#0d1728]/70 px-3 py-4 text-xs text-[#9ab5d8]">
             {showCustom ? uiText.emptyCustom : uiText.emptyBuiltin}
+            {!showCustom && activeBuiltinTotal > 0 && search.trim().length > 0 && (
+              <div className="mt-2">
+                <button
+                  className="rounded-md border border-[#4d6f9f] bg-[#13253f] px-2 py-1 text-[11px] text-[#d6e6ff] hover:bg-[#183255]"
+                  onClick={() => {
+                    setSearch('');
+                  }}
+                  type="button"
+                >
+                  {uiText.clearSearchAction}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -584,7 +691,6 @@ export function SnippetsPanel({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-[#d8e6ff]">{snippet.title}</p>
-                      <p className="mt-1 truncate text-[11px] text-[#8aa7ca]">{previewCommand(snippet.command)}</p>
                       {snippet.description && <p className="mt-1 text-[11px] text-[#a9c3e6]">{snippet.description}</p>}
                     </div>
                     {!isBuiltin && customSnippet && (
@@ -613,26 +719,27 @@ export function SnippetsPanel({
                     </div>
                   )}
 
+                  <button
+                    className="mt-2 block w-full rounded-md border border-[#365a86] bg-[#0b1322] px-2 py-2 text-left font-mono text-[11px] text-[#d9e7ff] hover:bg-[#12213a]"
+                    onClick={() => {
+                      void handleRunSnippet(snippet);
+                    }}
+                    title="点击填入命令预输入栏"
+                    type="button"
+                  >
+                    {snippet.command}
+                  </button>
+
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <button
                       className="rounded-md border border-[#4d6f9f] bg-[#13253f] px-2 py-1 text-[11px] text-[#d6e6ff] hover:bg-[#183255]"
                       disabled={isRunning}
                       onClick={() => {
-                        void handleRunSnippet(snippet, false);
+                        void handleRunSnippet(snippet);
                       }}
                       type="button"
                     >
                       {uiText.fillAction}
-                    </button>
-                    <button
-                      className="rounded-md border border-[#4f77ac] bg-[#1d3f69] px-2 py-1 text-[11px] text-[#f0f6ff] hover:bg-[#245188]"
-                      disabled={isRunning}
-                      onClick={() => {
-                        void handleRunSnippet(snippet, true);
-                      }}
-                      type="button"
-                    >
-                      {uiText.runAction}
                     </button>
                     {isBuiltin ? (
                       <button
@@ -737,5 +844,13 @@ export function SnippetsPanel({
         </div>
       )}
     </aside>
+  );
+
+  if (isMobileView && typeof document !== 'undefined') {
+    return createPortal(panel, document.body);
+  }
+
+  return (
+    panel
   );
 }

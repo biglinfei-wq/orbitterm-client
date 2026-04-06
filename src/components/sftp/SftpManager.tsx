@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type DragEvent as ReactDragEvent
 } from 'react';
-import { open, save } from '@tauri-apps/api/dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { join } from '@tauri-apps/api/path';
 import { toast } from 'sonner';
@@ -275,6 +275,8 @@ export function SftpManager({
   const [isDownloadDropHover, setIsDownloadDropHover] = useState<boolean>(false);
   const [clipboardPayload, setClipboardPayload] = useState<SftpClipboardPayload | null>(null);
   const listViewportRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef<boolean>(false);
   const enqueueUploadTask = useTransferStore((state) => state.enqueueUploadTask);
   const enqueueDownloadTask = useTransferStore((state) => state.enqueueDownloadTask);
   const cssVars = useMemo<CSSProperties>(() => {
@@ -417,6 +419,14 @@ export function SftpManager({
     const closeMenu = (): void => setMenu(null);
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -960,12 +970,32 @@ export function SftpManager({
   }, [editorOpen, editorEntry, editorContent, editorLoading, editorSaving, sessionId]);
 
   const renderRow = (entry: SftpEntry): JSX.Element => {
+    const clearLongPress = (): void => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+
+    const openTouchContextMenu = (x: number, y: number): void => {
+      setMenu({
+        entry,
+        x,
+        y
+      });
+      longPressTriggeredRef.current = true;
+    };
+
     return (
       <button
         className="grid w-full grid-cols-[2.3fr_1fr_1.3fr] items-center border-t px-3 text-left text-xs text-[color:var(--ot-sftp-text-primary)] hover:bg-[var(--ot-sftp-row-hover)]"
         draggable={!entry.isDir}
         key={entry.path}
         onClick={() => {
+          if (longPressTriggeredRef.current) {
+            longPressTriggeredRef.current = false;
+            return;
+          }
           handleEnter(entry);
         }}
         onDragStart={(event) => {
@@ -979,8 +1009,25 @@ export function SftpManager({
             y: event.clientY
           });
         }}
+        onTouchEnd={() => {
+          clearLongPress();
+        }}
+        onTouchMove={() => {
+          clearLongPress();
+        }}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          if (!touch) {
+            return;
+          }
+          clearLongPress();
+          longPressTriggeredRef.current = false;
+          longPressTimerRef.current = window.setTimeout(() => {
+            openTouchContextMenu(touch.clientX, touch.clientY);
+          }, 420);
+        }}
         style={{
-          height: `${VIRTUAL_ROW_HEIGHT}px`,
+          height: `${Math.max(VIRTUAL_ROW_HEIGHT, 44)}px`,
           borderColor: 'var(--ot-sftp-soft-border)'
         }}
         type="button"

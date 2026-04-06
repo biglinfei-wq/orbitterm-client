@@ -20,9 +20,16 @@ import {
 import { buildHostKey } from '../../utils/hostKey';
 import { APP_LANGUAGE_OPTIONS, type AppLanguage } from '../../i18n/core';
 import { useI18n } from '../../i18n/useI18n';
+import {
+  authenticateByBiometric,
+  bindBiometricMasterPasswordFromSession,
+  clearBiometricMasterPassword,
+  readBiometricStatus
+} from '../../services/mobileBiometric';
 
 interface SettingsDrawerProps {
   open: boolean;
+  isMobileView?: boolean;
   onClose: () => void;
   onOpenAbout: () => void;
   activeCategory: SettingsCategory;
@@ -89,6 +96,7 @@ const FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
 
 export function SettingsDrawer({
   open,
+  isMobileView = false,
   onClose,
   onOpenAbout,
   activeCategory,
@@ -114,6 +122,7 @@ export function SettingsDrawer({
   const autoLockMinutes = useUiSettingsStore((state) => state.autoLockMinutes);
   const closeWindowAction = useUiSettingsStore((state) => state.closeWindowAction);
   const autoSftpPathSyncEnabled = useUiSettingsStore((state) => state.autoSftpPathSyncEnabled);
+  const mobileBiometricEnabled = useUiSettingsStore((state) => state.mobileBiometricEnabled);
   const language = useUiSettingsStore((state) => state.language);
   const uiScalePercent = useUiSettingsStore((state) => state.uiScalePercent);
   const contrastMode = useUiSettingsStore((state) => state.contrastMode);
@@ -130,6 +139,7 @@ export function SettingsDrawer({
   const setAutoLockMinutes = useUiSettingsStore((state) => state.setAutoLockMinutes);
   const setCloseWindowAction = useUiSettingsStore((state) => state.setCloseWindowAction);
   const setAutoSftpPathSyncEnabled = useUiSettingsStore((state) => state.setAutoSftpPathSyncEnabled);
+  const setMobileBiometricEnabled = useUiSettingsStore((state) => state.setMobileBiometricEnabled);
   const setLanguage = useUiSettingsStore((state) => state.setLanguage);
   const setUiScalePercent = useUiSettingsStore((state) => state.setUiScalePercent);
   const setContrastMode = useUiSettingsStore((state) => state.setContrastMode);
@@ -177,6 +187,7 @@ export function SettingsDrawer({
   const [cloud2FAEnableOtpInput, setCloud2FAEnableOtpInput] = useState<string>('');
   const [cloud2FADisableOtpInput, setCloud2FADisableOtpInput] = useState<string>('');
   const [cloud2FADisableBackupInput, setCloud2FADisableBackupInput] = useState<string>('');
+  const [mobileBiometricAvailable, setMobileBiometricAvailable] = useState<boolean>(false);
 
   useEffect(() => {
     if (!open || !cloudSyncSession) {
@@ -196,6 +207,29 @@ export function SettingsDrawer({
       setSelectedIdentityId(identities[0]?.id ?? '');
     }
   }, [identities, selectedIdentityId]);
+
+  useEffect(() => {
+    if (!open || !isMobileView) {
+      setMobileBiometricAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await readBiometricStatus();
+        if (!cancelled) {
+          setMobileBiometricAvailable(status.isAvailable);
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          setMobileBiometricAvailable(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isMobileView, open]);
 
   const selectedIdentity = useMemo(() => {
     if (!selectedIdentityId) {
@@ -543,14 +577,18 @@ export function SettingsDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex justify-end bg-slate-900/36 backdrop-blur-[4px]">
+    <div className={`fixed inset-0 flex justify-end bg-slate-900/36 backdrop-blur-[4px] ${isMobileView ? 'z-[130]' : 'z-[120]'}`}>
       <button
         aria-label="关闭设置"
         className="flex-1 cursor-default"
         onClick={onClose}
         type="button"
       />
-      <aside className="h-full w-full max-w-[620px] overflow-y-auto border-l border-white/25 bg-gradient-to-b from-[#eef4ff] via-[#ecf3ff] to-[#e6f0ff] p-5 shadow-[0_24px_80px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+      <aside
+        className={`h-full w-full max-w-[620px] overflow-y-auto border-l border-white/25 bg-gradient-to-b from-[#eef4ff] via-[#ecf3ff] to-[#e6f0ff] p-5 shadow-[0_24px_80px_rgba(15,23,42,0.42)] backdrop-blur-xl ${
+          isMobileView ? 'pb-[calc(6.2rem+env(safe-area-inset-bottom))]' : ''
+        }`}
+      >
         <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between border-b border-white/50 bg-[#eef5ff]/92 px-5 py-4 backdrop-blur-2xl">
           <h2 className="text-base font-semibold text-slate-900">{t('settings.centerTitle')}</h2>
           <button
@@ -625,8 +663,8 @@ export function SettingsDrawer({
             </div>
             <input
               className="w-full accent-[#2f6df4]"
-              max={22}
-              min={11}
+              max={20}
+              min={9}
               onChange={(event) => setTerminalFontSize(Number(event.target.value))}
               step={1}
               type="range"
@@ -878,6 +916,49 @@ export function SettingsDrawer({
                 value={autoLockMinutes}
               />
             </div>
+
+            {isMobileView && (
+              <div className="rounded-xl border border-slate-200 bg-white/75 px-3 py-2">
+                <label className="flex items-start gap-3">
+                  <input
+                    checked={mobileBiometricEnabled}
+                    className="mt-0.5 h-4 w-4 accent-[#2f6df4]"
+                    disabled={!mobileBiometricAvailable}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      if (!checked) {
+                        setMobileBiometricEnabled(false);
+                        void clearBiometricMasterPassword();
+                        toast.message('已关闭 Face ID / Touch ID，后续将仅使用金库密码或账号密码解锁。');
+                        return;
+                      }
+                      void (async () => {
+                        try {
+                          await authenticateByBiometric('启用 Face ID / Touch ID 解锁');
+                          await bindBiometricMasterPasswordFromSession();
+                          setMobileBiometricEnabled(true);
+                          toast.success('已启用 Face ID / Touch ID，后续将优先使用生物识别解锁。');
+                        } catch (error) {
+                          setMobileBiometricEnabled(false);
+                          const fallback = '启用生物识别失败，请先确认金库已解锁并重试。';
+                          const message = error instanceof Error ? error.message : fallback;
+                          toast.error(message || fallback);
+                        }
+                      })();
+                    }}
+                    type="checkbox"
+                  />
+                  <span className="text-xs text-slate-700">
+                    启用 Face ID / Touch ID 解锁（移动端）。未启用时，必须输入金库密码或账号密码解锁。
+                  </span>
+                </label>
+                {!mobileBiometricAvailable && (
+                  <p className="mt-1 text-[11px] text-amber-600">
+                    当前设备未检测到可用生物识别能力，暂不可启用。
+                  </p>
+                )}
+              </div>
+            )}
 
             <label className="flex items-start gap-3 pt-1">
               <input

@@ -12,6 +12,7 @@ const DEFAULT_BOOTSTRAP_DISCOVERY_ENDPOINTS = [
   'https://www.orbitterm.com',
   'https://sync.orbitterm.com'
 ];
+const OFFICIAL_BOOTSTRAP_FALLBACK_ENDPOINTS = ['https://sync.orbitterm.com', 'https://www.orbitterm.com'];
 const LEGACY_SYNC_HOST_MAPPINGS: Record<string, string> = {
   'sync.yest.cc': 'sync.orbitterm.com',
   'www.yest.cc': 'www.orbitterm.com'
@@ -599,16 +600,23 @@ const readBootstrapCache = (): CloudBootstrapCache | null => {
     if (!expiresAt || !endpoint || !policy) {
       return null;
     }
+    const setupRequired = policy.setupRequired === true;
+    const defaultSyncDomain =
+      typeof policy.defaultSyncDomain === 'string'
+        ? migrateLegacySyncEndpoint(policy.defaultSyncDomain).trim()
+        : '';
+    if (!setupRequired && !defaultSyncDomain) {
+      return null;
+    }
     return {
       expiresAt,
       endpoint,
       policy: {
-        defaultSyncDomain:
-          typeof policy.defaultSyncDomain === 'string' ? policy.defaultSyncDomain.trim() : '',
+        defaultSyncDomain,
         lockSyncDomain: policy.lockSyncDomain === true,
         hideSyncDomainInput: policy.hideSyncDomainInput === true,
         requireActivation: policy.requireActivation !== false,
-        setupRequired: policy.setupRequired === true,
+        setupRequired,
         proCheckoutUrl:
           typeof policy.proCheckoutUrl === 'string' ? policy.proCheckoutUrl.trim() : ''
       }
@@ -948,10 +956,14 @@ export const readCloudSyncPolicy = (): CloudSyncPolicy | null => {
   }
   try {
     const parsed = JSON.parse(raw) as Partial<CloudSyncPolicy>;
+    const setupRequired = parsed.setupRequired === true;
     const defaultSyncDomain =
       typeof parsed.defaultSyncDomain === 'string'
         ? migrateLegacySyncEndpoint(parsed.defaultSyncDomain).trim()
         : '';
+    if (!setupRequired && !defaultSyncDomain) {
+      return null;
+    }
     const fallbackCheckout = resolveCheckoutURLFromDomain(defaultSyncDomain);
     const rawCheckout = typeof parsed.proCheckoutUrl === 'string' ? parsed.proCheckoutUrl.trim() : '';
     let proCheckoutUrl = rawCheckout || fallbackCheckout;
@@ -971,7 +983,7 @@ export const readCloudSyncPolicy = (): CloudSyncPolicy | null => {
       lockSyncDomain: parsed.lockSyncDomain === true,
       hideSyncDomainInput: parsed.hideSyncDomainInput === true,
       requireActivation: parsed.requireActivation !== false,
-      setupRequired: parsed.setupRequired === true,
+      setupRequired,
       proCheckoutUrl
     };
   } catch (_error) {
@@ -1455,10 +1467,12 @@ export const fetchCloudSyncPolicy = async (apiBaseUrl: string): Promise<CloudSyn
       method: 'GET'
     });
     const payload = await readJson<Partial<CloudSyncPolicy>>(response, '读取客户端策略失败，请稍后重试。');
-    const defaultSyncDomain =
+    const configuredSyncDomain =
       typeof payload.defaultSyncDomain === 'string'
         ? migrateLegacySyncEndpoint(payload.defaultSyncDomain).trim()
         : '';
+    const setupRequired = payload.setupRequired === true;
+    const defaultSyncDomain = configuredSyncDomain || (setupRequired ? '' : endpoint);
     const fallbackCheckout = resolveCheckoutURLFromDomain(defaultSyncDomain || endpoint);
     const rawCheckout = typeof payload.proCheckoutUrl === 'string' ? payload.proCheckoutUrl.trim() : '';
     let proCheckoutUrl = rawCheckout || fallbackCheckout;
@@ -1478,7 +1492,7 @@ export const fetchCloudSyncPolicy = async (apiBaseUrl: string): Promise<CloudSyn
       lockSyncDomain: payload.lockSyncDomain === true,
       hideSyncDomainInput: payload.hideSyncDomainInput === true,
       requireActivation: payload.requireActivation !== false,
-      setupRequired: payload.setupRequired === true,
+      setupRequired,
       proCheckoutUrl
     };
   } catch (error) {
@@ -1488,6 +1502,23 @@ export const fetchCloudSyncPolicy = async (apiBaseUrl: string): Promise<CloudSyn
     });
     throw error;
   }
+};
+
+const buildPolicyFallbackEndpoints = (discoveryEndpoints: string[]): string[] => {
+  const candidates = new Set<string>();
+  for (const raw of discoveryEndpoints) {
+    const normalized = parseEndpointFromRawUrl(raw) ?? normalizeHttpsOrigin(raw);
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+  for (const raw of OFFICIAL_BOOTSTRAP_FALLBACK_ENDPOINTS) {
+    const normalized = normalizeHttpsOrigin(raw);
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+  return Array.from(candidates);
 };
 
 export const discoverCloudSyncPolicy = async (
@@ -1561,6 +1592,25 @@ export const discoverCloudSyncPolicy = async (
         });
         lastError = error instanceof Error ? error : new Error(message);
       }
+    }
+  }
+
+  const fallbackEndpoints = buildPolicyFallbackEndpoints(discoveryEndpoints);
+  for (const endpoint of fallbackEndpoints) {
+    try {
+      const fallbackPolicy = await fetchCloudSyncPolicy(endpoint);
+      const recoveredDomain = fallbackPolicy.defaultSyncDomain.trim();
+      if (!recoveredDomain && !fallbackPolicy.setupRequired) {
+        continue;
+      }
+      saveCloudSyncPolicy(fallbackPolicy);
+      logAppWarn('cloud-bootstrap', '引导发现失败，已通过直连策略接口恢复同步策略', {
+        endpoint,
+        domain: recoveredDomain || '(setup-required)'
+      });
+      return fallbackPolicy;
+    } catch (_error) {
+      // Try next fallback endpoint.
     }
   }
 

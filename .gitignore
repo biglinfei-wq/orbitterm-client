@@ -8,7 +8,3 @@ src-tauri/.cargo/
 src-tauri/gen/
 .idea/
 .vscode/
-
-# Large release binaries are published via GitHub Releases
-releases/*/*.apk
-releases/*/*.aab

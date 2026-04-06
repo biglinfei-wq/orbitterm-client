@@ -29,6 +29,7 @@ interface UiSettingsState {
   commandHighlightEnabled: boolean;
   snippetsPanelCollapsed: boolean;
   autoSftpPathSyncEnabled: boolean;
+  mobileBiometricEnabled: boolean;
   hasCompletedOnboarding: boolean;
   hostUsageStats: Record<string, { count: number; lastConnectedAt: number }>;
   setTerminalFontSize: (value: number) => void;
@@ -49,6 +50,7 @@ interface UiSettingsState {
   setCommandHighlightEnabled: (value: boolean) => void;
   setSnippetsPanelCollapsed: (value: boolean) => void;
   setAutoSftpPathSyncEnabled: (value: boolean) => void;
+  setMobileBiometricEnabled: (value: boolean) => void;
   setHasCompletedOnboarding: (value: boolean) => void;
   recordHostConnection: (hostId: string) => void;
 }
@@ -150,10 +152,11 @@ export const useUiSettingsStore = create<UiSettingsState>()(
       commandHighlightEnabled: true,
       snippetsPanelCollapsed: true,
       autoSftpPathSyncEnabled: true,
+      mobileBiometricEnabled: false,
       hasCompletedOnboarding: false,
       hostUsageStats: {},
       setTerminalFontSize: (value) => {
-        set({ terminalFontSize: clamp(Math.round(value), 11, 22) });
+        set({ terminalFontSize: clamp(Math.round(value), 9, 20) });
       },
       setTerminalFontFamily: (value) => {
         const next = value.trim();
@@ -211,6 +214,9 @@ export const useUiSettingsStore = create<UiSettingsState>()(
       setAutoSftpPathSyncEnabled: (value) => {
         set({ autoSftpPathSyncEnabled: value });
       },
+      setMobileBiometricEnabled: (value) => {
+        set({ mobileBiometricEnabled: value });
+      },
       setHasCompletedOnboarding: (value) => {
         set({ hasCompletedOnboarding: value });
       },
@@ -248,7 +254,7 @@ export const useUiSettingsStore = create<UiSettingsState>()(
           ...currentState,
           terminalFontSize:
             typeof persisted.terminalFontSize === 'number'
-              ? clamp(Math.round(persisted.terminalFontSize), 11, 22)
+              ? clamp(Math.round(persisted.terminalFontSize), 9, 20)
               : currentState.terminalFontSize,
           terminalFontFamily:
             typeof persisted.terminalFontFamily === 'string' && persisted.terminalFontFamily.trim()
@@ -313,6 +319,10 @@ export const useUiSettingsStore = create<UiSettingsState>()(
             typeof persisted.autoSftpPathSyncEnabled === 'boolean'
               ? persisted.autoSftpPathSyncEnabled
               : currentState.autoSftpPathSyncEnabled,
+          mobileBiometricEnabled:
+            typeof persisted.mobileBiometricEnabled === 'boolean'
+              ? persisted.mobileBiometricEnabled
+              : currentState.mobileBiometricEnabled,
           hasCompletedOnboarding:
             typeof persisted.hasCompletedOnboarding === 'boolean'
               ? persisted.hasCompletedOnboarding
@@ -339,6 +349,7 @@ export const useUiSettingsStore = create<UiSettingsState>()(
         commandHighlightEnabled: state.commandHighlightEnabled,
         snippetsPanelCollapsed: state.snippetsPanelCollapsed,
         autoSftpPathSyncEnabled: state.autoSftpPathSyncEnabled,
+        mobileBiometricEnabled: state.mobileBiometricEnabled,
         hasCompletedOnboarding: state.hasCompletedOnboarding,
         hostUsageStats: state.hostUsageStats
       })

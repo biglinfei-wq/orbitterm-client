@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { useHostStore } from '../store/useHostStore';
 import { useUiSettingsStore } from '../store/useUiSettingsStore';
 import { useI18n } from '../i18n/useI18n';
+import { detectMobileFormFactor } from '../services/runtime';
 
 type OnboardingStep = 1 | 2 | 3 | 4;
 
@@ -35,8 +36,13 @@ const createRecoveryKey = (): string => {
   return blocks.join('-');
 };
 
-export function FirstRunOnboarding(): JSX.Element {
+interface FirstRunOnboardingProps {
+  isMobileView?: boolean;
+}
+
+export function FirstRunOnboarding({ isMobileView }: FirstRunOnboardingProps): JSX.Element {
   const { t } = useI18n();
+  const isMobileLayout = isMobileView ?? detectMobileFormFactor();
   const unlockVault = useHostStore((state) => state.unlockVault);
   const isUnlocking = useHostStore((state) => state.isUnlocking);
   const unlockError = useHostStore((state) => state.unlockError);
@@ -50,9 +56,7 @@ export function FirstRunOnboarding(): JSX.Element {
   const [recoveryKey, setRecoveryKey] = useState<string>('');
 
   const canGoBack = step > 1 && step < 4;
-  const progress = useMemo(() => {
-    return (step / 4) * 100;
-  }, [step]);
+  const progress = (step / 4) * 100;
 
   const goNext = (): void => {
     setLocalError(null);
@@ -119,10 +123,29 @@ export function FirstRunOnboarding(): JSX.Element {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#04070e] px-6 py-8">
+    <main
+      className={`relative bg-[#04070e] ${
+        isMobileLayout
+          ? 'min-h-[100dvh] overflow-visible'
+          : 'flex min-h-screen items-center justify-center overflow-hidden px-6 py-8'
+      }`}
+      style={
+        isMobileLayout
+          ? ({
+              WebkitOverflowScrolling: 'touch'
+            } as CSSProperties)
+          : undefined
+      }
+    >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_16%,rgba(90,138,201,0.35),transparent_35%),radial-gradient(circle_at_86%_12%,rgba(92,159,246,0.22),transparent_34%),radial-gradient(circle_at_50%_88%,rgba(25,47,84,0.62),transparent_44%)]" />
 
-      <section className="relative w-full max-w-3xl rounded-3xl border border-[#29456d] bg-[#071322]/80 p-7 text-[#e4eeff] shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-9">
+      <section
+        className={`relative w-full text-[#e4eeff] ${
+          isMobileLayout
+            ? 'min-h-[100dvh] border-0 bg-[#071322] px-4 pb-[calc(6.4rem+env(safe-area-inset-bottom))] pt-[calc(0.75rem+env(safe-area-inset-top))]'
+            : 'max-w-3xl rounded-3xl border border-[#29456d] bg-[#071322]/80 p-7 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-9'
+        }`}
+      >
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#8fb0de]">OrbitTerm</p>
@@ -266,7 +289,13 @@ export function FirstRunOnboarding(): JSX.Element {
           </div>
         )}
 
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <div
+          className={`mt-8 flex flex-wrap items-center justify-between gap-3 ${
+            isMobileLayout
+              ? 'fixed bottom-0 left-0 right-0 z-40 border-t border-[#1d3150] bg-[#071322]/96 px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur'
+              : ''
+          }`}
+        >
           <button
             className="rounded-xl border border-[#3a5d8b] bg-[#10233d] px-4 py-2.5 text-sm text-[#d7e7ff] transition hover:bg-[#163157] disabled:opacity-50"
             disabled={!canGoBack}

@@ -5,7 +5,8 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent
+  type MouseEvent as ReactMouseEvent,
+  type TouchEvent as ReactTouchEvent
 } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { exit as processExit } from '@tauri-apps/plugin-process';
@@ -31,9 +32,11 @@ import { OrbitInspector } from './components/terminal/OrbitInspector';
 import { SnippetsPanel } from './components/terminal/SnippetsPanel';
 import { SftpManager } from './components/sftp/SftpManager';
 import { TransferCenter } from './components/transfer/TransferCenter';
+import { MobileLayout, type MobileNavTab } from './components/layout/MobileLayout';
 import { AboutOrbitTermModal } from './components/settings/AboutOrbitTermModal';
 import { SettingsDrawer, type SettingsCategory } from './components/settings/SettingsDrawer';
 import { CloudAuthModal } from './components/cloud/CloudAuthModal';
+import { BrandLogo } from './components/BrandLogo';
 import { useHostStore } from './store/useHostStore';
 import { useUiSettingsStore, type CloseWindowAction } from './store/useUiSettingsStore';
 import { useTransferStore } from './store/useTransferStore';
@@ -73,7 +76,9 @@ import {
 } from './theme/orbitTheme';
 import { buildHostKey } from './utils/hostKey';
 import { useI18n } from './i18n/useI18n';
-const appWindow = getCurrentWebviewWindow()
+import { detectMobileFormFactor, isAndroidRuntime } from './services/runtime';
+import { applyMobileOrientationMode } from './services/mobileOrientation';
+const appWindow = getCurrentWebviewWindow();
 
 type DashboardSection = 'hosts' | 'terminal';
 
@@ -122,7 +127,9 @@ interface TerminalPerfSummary {
 const toolbarButtonClass =
   'rounded-lg border border-slate-300 bg-white/90 px-2.5 py-1 text-[11px] font-medium text-slate-800 hover:bg-white disabled:cursor-not-allowed disabled:opacity-55';
 const darkPanelButtonClass =
-  'rounded-lg border border-[#5a79a8] bg-[#0f1726] px-2 py-1 text-[11px] font-medium text-[#d7e5ff] hover:bg-[#13203a]';
+  'ot-compact-hit rounded-lg border border-[#5a79a8] bg-[#0f1726] px-2 py-[1px] text-[11px] leading-4 font-medium text-[#d7e5ff] hover:bg-[#13203a]';
+const compactDarkPanelButtonClass =
+  'ot-compact-hit h-[18px] rounded-md border border-[#5a79a8] bg-[#0f1726] px-2 py-0 text-[11px] leading-[1] font-medium text-[#d7e5ff] hover:bg-[#13203a]';
 const SFTP_PANEL_MIN_WIDTH = 280;
 const SFTP_PANEL_MAX_WIDTH = 680;
 const IDLE_RELEASE_CHECK_MS = 5 * 60 * 1000;
@@ -136,6 +143,8 @@ const TERMINAL_INPUT_BUFFER_LIMIT = 1024;
 const TERMINAL_INPUT_FLUSH_MS = 6;
 const TERMINAL_INPUT_MAX_BUFFER_CHARS = 8192;
 const PERF_STATS_FLUSH_MS = 1000;
+const MOBILE_SESSION_SWIPE_THRESHOLD_PX = 72;
+const MOBILE_SESSION_SWIPE_MAX_Y_DRIFT = 60;
 const AUTO_RECONNECT_WAIT_ONLINE_MS = 20_000;
 const TERMINAL_DRAFT_HISTORY_LIMIT = 120;
 const CWD_CHANGE_COMMAND_PATTERN =
@@ -966,6 +975,7 @@ function App(): JSX.Element {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState<string>('');
   const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = useState<number>(0);
+  const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileFormFactor());
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('settings');
@@ -974,6 +984,7 @@ function App(): JSX.Element {
   const [isAboutOpen, setIsAboutOpen] = useState<boolean>(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState<boolean>(false);
   const [dashboardSection, setDashboardSection] = useState<DashboardSection>('hosts');
+  const [mobileNavTab, setMobileNavTab] = useState<MobileNavTab>('hosts');
   const [isHostFilterDrawerOpen, setIsHostFilterDrawerOpen] = useState<boolean>(false);
   const [hostSearchQuery, setHostSearchQuery] = useState<string>('');
   const [activeTagFilter, setActiveTagFilter] = useState<string>('all');
@@ -1009,6 +1020,12 @@ function App(): JSX.Element {
   const [terminalDraftHistoryCursor, setTerminalDraftHistoryCursor] = useState<number>(-1);
   const [terminalDraftSnapshot, setTerminalDraftSnapshot] = useState<string>('');
   const [isDraftHistoryOpen, setIsDraftHistoryOpen] = useState<boolean>(false);
+  const [isMobileTerminalToolsExpanded, setIsMobileTerminalToolsExpanded] = useState<boolean>(false);
+  const [isMobileMetricsExpanded, setIsMobileMetricsExpanded] = useState<boolean>(false);
+  const [isMobilePortraitKeyboardInputEnabled, setIsMobilePortraitKeyboardInputEnabled] =
+    useState<boolean>(false);
+  const isMobileLandscape = false;
+  const [mobileKeyboardInset, setMobileKeyboardInset] = useState<number>(0);
   const [isHostInfoOpen, setIsHostInfoOpen] = useState<boolean>(false);
   const [isLoadingHostInfo, setIsLoadingHostInfo] = useState<boolean>(false);
   const [hostInfoError, setHostInfoError] = useState<string | null>(null);
@@ -1031,6 +1048,7 @@ function App(): JSX.Element {
     sysUiFlushes: 0,
     updatedAt: Date.now()
   });
+  const [isPrivacyMaskVisible, setIsPrivacyMaskVisible] = useState<boolean>(false);
 
   const appView = useHostStore((state) => state.appView);
   const hosts = useHostStore((state) => state.hosts);
@@ -1069,6 +1087,7 @@ function App(): JSX.Element {
   const deleteSnippet = useHostStore((state) => state.deleteSnippet);
 
   const terminalFontSize = useUiSettingsStore((state) => state.terminalFontSize);
+  const setTerminalFontSize = useUiSettingsStore((state) => state.setTerminalFontSize);
   const terminalFontFamily = useUiSettingsStore((state) => state.terminalFontFamily);
   const terminalLineHeight = useUiSettingsStore((state) => state.terminalLineHeight);
   const terminalOpacity = useUiSettingsStore((state) => state.terminalOpacity);
@@ -1091,6 +1110,7 @@ function App(): JSX.Element {
   const snippetsPanelCollapsed = useUiSettingsStore((state) => state.snippetsPanelCollapsed);
   const setSnippetsPanelCollapsed = useUiSettingsStore((state) => state.setSnippetsPanelCollapsed);
   const setTerminalLineHeight = useUiSettingsStore((state) => state.setTerminalLineHeight);
+  const mobileBiometricEnabled = useUiSettingsStore((state) => state.mobileBiometricEnabled);
   const applyTransferProgressEvent = useTransferStore((state) => state.applyProgressEvent);
   const appLogs = useAppLogStore((state) => state.logs);
   const clearAppLogs = useAppLogStore((state) => state.clearLogs);
@@ -1111,6 +1131,125 @@ function App(): JSX.Element {
       document.documentElement.lang = locale;
     }
   }, [locale]);
+  const isAndroidClient = useMemo(() => isAndroidRuntime(), []);
+  const isMobileRuntime = isMobileLayout || isAndroidClient;
+
+  useEffect(() => {
+    const syncLayout = (): void => {
+      setIsMobileLayout(detectMobileFormFactor());
+    };
+    syncLayout();
+    window.addEventListener('resize', syncLayout);
+    return () => {
+      window.removeEventListener('resize', syncLayout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileRuntime) {
+      return;
+    }
+    setIsHostFilterDrawerOpen(false);
+    setIsSftpCollapsed(true);
+    setIsMetricDetailOpen(false);
+    setIsMobileTerminalToolsExpanded(false);
+    setIsMobileMetricsExpanded(false);
+    setIsMobilePortraitKeyboardInputEnabled(false);
+  }, [isMobileRuntime]);
+
+  useEffect(() => {
+    if (!isMobileRuntime || typeof window === 'undefined' || !window.visualViewport) {
+      setMobileKeyboardInset(0);
+      return;
+    }
+    const viewport = window.visualViewport;
+    const syncInset = (): void => {
+      const inset = Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop));
+      setMobileKeyboardInset(inset);
+    };
+    syncInset();
+    viewport.addEventListener('resize', syncInset);
+    viewport.addEventListener('scroll', syncInset);
+    return () => {
+      viewport.removeEventListener('resize', syncInset);
+      viewport.removeEventListener('scroll', syncInset);
+      setMobileKeyboardInset(0);
+    };
+  }, [isMobileRuntime]);
+
+  useEffect(() => {
+    if (!isMobileLayout && !isAndroidClient) {
+      setIsPrivacyMaskVisible(false);
+      return;
+    }
+
+    const showMask = (): void => {
+      setIsPrivacyMaskVisible(true);
+    };
+    const hideMask = (): void => {
+      window.setTimeout(() => {
+        setIsPrivacyMaskVisible(false);
+      }, 120);
+    };
+
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') {
+        showMask();
+        return;
+      }
+      hideMask();
+    };
+
+    window.addEventListener('blur', showMask);
+    window.addEventListener('focus', hideMask);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.removeEventListener('blur', showMask);
+      window.removeEventListener('focus', hideMask);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [isAndroidClient, isMobileLayout]);
+
+  useEffect(() => {
+    if ((!isMobileLayout && !isAndroidClient) || appView !== 'dashboard') {
+      return;
+    }
+
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      if (activeSessions.length === 0) {
+        return;
+      }
+      const currentSessionId = activeTerminalSessionIdRef.current;
+      if (currentSessionId) {
+        void sshSetPulseActivity(currentSessionId, true).catch(() => {
+          // Ignore keep-alive pulse sync failures during resume.
+        });
+      }
+      const tip =
+        locale === 'en-US'
+          ? 'Resuming terminal sessions...'
+          : locale === 'ja-JP'
+            ? '端末セッションを再開しています...'
+            : locale === 'zh-TW'
+              ? '正在恢復終端會話...'
+              : '正在恢复终端会话...';
+      setReconnectMessage((prev) => prev ?? tip);
+      window.setTimeout(() => {
+        setReconnectMessage((prev) => (prev === tip ? null : prev));
+      }, 1400);
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [activeSessions.length, appView, isAndroidClient, isMobileLayout, locale]);
 
   const syncLastText = useMemo(() => {
     if (!cloudSyncLastAt) {
@@ -1300,6 +1439,17 @@ function App(): JSX.Element {
     const activePane = findPaneById(workspace.root, workspace.activePaneId);
     return activePane?.sessionId ?? activeSessionId;
   }, [activeSessionId, splitWorkspaces]);
+  useEffect(() => {
+    if (!isMobileRuntime) {
+      return;
+    }
+    void applyMobileOrientationMode('portrait');
+  }, [isMobileRuntime]);
+  useEffect(() => {
+    if (!activeSessionId) {
+      copyActiveTerminalOutputRef.current = null;
+    }
+  }, [activeSessionId]);
   const activeTerminalHostId = useMemo(() => {
     if (!activeSessionId) {
       return null;
@@ -1464,6 +1614,43 @@ function App(): JSX.Element {
       profileDraftCloseAction !== closeWindowAction
     );
   }, [autoSftpPathSyncEnabled, closeWindowAction, profileDraftAutoPathSync, profileDraftCloseAction]);
+  const mobileNavTitle = useMemo(() => {
+    if (mobileNavTab === 'hosts') {
+      return uiText.navHosts;
+    }
+    if (mobileNavTab === 'sessions') {
+      return uiText.navTerminal;
+    }
+    if (mobileNavTab === 'tools') {
+      return locale === 'zh-CN'
+        ? '工具'
+        : locale === 'zh-TW'
+          ? '工具'
+          : locale === 'ja-JP'
+            ? 'ツール'
+            : 'Tools';
+    }
+    return locale === 'zh-CN'
+      ? '设置'
+      : locale === 'zh-TW'
+        ? '設定'
+        : locale === 'ja-JP'
+          ? '設定'
+          : 'Settings';
+  }, [locale, mobileNavTab, uiText.navHosts, uiText.navTerminal]);
+  const isMobileTerminalFocusMode =
+    isMobileRuntime &&
+    appView === 'dashboard' &&
+    dashboardSection === 'terminal' &&
+    activeSessions.length > 0 &&
+    !isSettingsOpen;
+  const mobileTopActionButtonClass = isMobileRuntime
+    ? 'ot-compact-hit h-[18px] rounded border border-[#5a79a8] bg-[#0f1726] px-2 py-0 text-[11px] leading-[1] font-medium text-[#d7e5ff] hover:bg-[#13203a]'
+    : darkPanelButtonClass;
+  const terminalDraftActionButtonClass = isMobileRuntime
+    ? 'ot-compact-hit h-9 rounded-md border border-[#5a79a8] bg-[#0f1726] px-3 py-0 text-[12px] leading-[1] font-semibold text-[#d7e5ff] hover:bg-[#13203a]'
+    : darkPanelButtonClass;
+  const allowPreInputKeyboard = !isMobileRuntime || isMobilePortraitKeyboardInputEnabled;
   const draftHistoryPreview = useMemo(() => {
     return [...terminalDraftHistory].slice(-12).reverse();
   }, [terminalDraftHistory]);
@@ -1492,6 +1679,15 @@ function App(): JSX.Element {
   const terminalInputBufferRef = useRef<Map<string, string>>(new Map());
   const terminalInputWriteBufferRef = useRef<Map<string, string>>(new Map());
   const terminalInputFlushTimersRef = useRef<Map<string, number>>(new Map());
+  const terminalPreInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const copyActiveTerminalOutputRef = useRef<((scope?: 'visible' | 'all') => Promise<boolean>) | null>(null);
+  const terminalTouchStateRef = useRef<{
+    startX: number;
+    startY: number;
+    swipeHandled: boolean;
+    pinchDistance: number | null;
+    baseFontSize: number;
+  } | null>(null);
   const pendingAutoSftpSyncTimersRef = useRef<Map<string, number>>(new Map());
   const sftpPathSyncInFlightRef = useRef<Set<string>>(new Set());
   const lastKnownSftpPathRef = useRef<Map<string, string>>(new Map());
@@ -1623,6 +1819,68 @@ function App(): JSX.Element {
     setIsSettingsOpen(true);
     setIsProfileMenuOpen(false);
   }, []);
+
+  const handleMobileTabChange = useCallback(
+    (tab: MobileNavTab): void => {
+      setMobileNavTab(tab);
+      setIsProfileMenuOpen(false);
+      setIsSyncPopoverOpen(false);
+      if (tab === 'hosts') {
+        setIsMobileTerminalToolsExpanded(false);
+        setIsSettingsOpen(false);
+        setDashboardSection('hosts');
+        return;
+      }
+      if (tab === 'sessions') {
+        setIsMobileTerminalToolsExpanded(false);
+        setIsSettingsOpen(false);
+        setDashboardSection('terminal');
+        return;
+      }
+      if (tab === 'tools') {
+        setIsSettingsOpen(false);
+        setDashboardSection('terminal');
+        setIsMobileTerminalToolsExpanded(true);
+        return;
+      }
+      setIsMobileTerminalToolsExpanded(false);
+      openSettingsCategory('settings');
+    },
+    [openSettingsCategory]
+  );
+
+  const handleReturnToMobileApp = useCallback((): void => {
+    setIsMobileTerminalToolsExpanded(false);
+    setIsMobileMetricsExpanded(false);
+    setIsMobilePortraitKeyboardInputEnabled(false);
+    setIsMetricDetailOpen(false);
+    setIsDraftHistoryOpen(false);
+    setIsSettingsOpen(false);
+    setDashboardSection('hosts');
+    setMobileNavTab('hosts');
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileRuntime) {
+      return;
+    }
+    if (isSettingsOpen) {
+      setMobileNavTab('settings');
+      return;
+    }
+    if (dashboardSection === 'hosts') {
+      setMobileNavTab('hosts');
+      return;
+    }
+    setMobileNavTab(isMobileTerminalToolsExpanded ? 'tools' : 'sessions');
+  }, [dashboardSection, isMobileRuntime, isSettingsOpen, isMobileTerminalToolsExpanded]);
+
+  useEffect(() => {
+    if (!isMobileRuntime || dashboardSection === 'terminal') {
+      return;
+    }
+    setIsMobilePortraitKeyboardInputEnabled(false);
+  }, [dashboardSection, isMobileRuntime]);
 
   const openSettingsSection = useCallback((sectionId: string): void => {
     const category = SETTINGS_SECTION_CATEGORY_MAP[sectionId] ?? 'settings';
@@ -1854,13 +2112,19 @@ function App(): JSX.Element {
   useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;
     const prevBodyOverflow = document.body.style.overflow;
-    document.documentElement.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
+    const shouldUnlockDocumentScroll = isMobileLayout || isAndroidClient || !hasCompletedOnboarding;
+    if (shouldUnlockDocumentScroll) {
+      document.documentElement.style.overflow = 'auto';
+      document.body.style.overflow = 'auto';
+    } else {
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+    }
     return () => {
       document.documentElement.style.overflow = prevHtmlOverflow;
       document.body.style.overflow = prevBodyOverflow;
     };
-  }, []);
+  }, [hasCompletedOnboarding, isAndroidClient, isMobileLayout]);
 
   useEffect(() => {
     document.body.style.background = activeThemePreset.bodyBackground;
@@ -1878,14 +2142,21 @@ function App(): JSX.Element {
       const report = await runHealthCheck();
       setHealthReport(report);
       const issues = report.items.filter((item) => item.status !== 'ok');
-      if (issues.length > 0) {
-        const firstIssue = issues[0];
-        if (!firstIssue) {
-          return;
+      const criticalIssues = report.items.filter((item) => item.status === 'error');
+      if (criticalIssues.length > 0) {
+        const firstIssue = criticalIssues[0];
+        if (firstIssue) {
+          toast.warning(`环境检测异常：${firstIssue.label}`, {
+            description: firstIssue.suggestion ?? firstIssue.message
+          });
         }
-        toast.warning(`环境检测异常：${firstIssue.label}`, {
-          description: firstIssue.suggestion ?? firstIssue.message
-        });
+      } else if (showOkToast && issues.length > 0) {
+        const firstIssue = issues[0];
+        if (firstIssue) {
+          toast.warning(`环境检测提示：${firstIssue.label}`, {
+            description: firstIssue.suggestion ?? firstIssue.message
+          });
+        }
       } else if (showOkToast) {
         toast.success('环境健康检查通过');
       }
@@ -1902,7 +2173,7 @@ function App(): JSX.Element {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
-      if (appView !== 'dashboard') {
+      if (appView !== 'dashboard' || isMobileLayout) {
         return;
       }
 
@@ -1961,7 +2232,7 @@ function App(): JSX.Element {
     return () => {
       window.removeEventListener('keydown', handler);
     };
-  }, [appView, closeTerminal, isCommandPaletteOpen, isSettingsOpen, openSettingsCategory]);
+  }, [appView, closeTerminal, isCommandPaletteOpen, isMobileLayout, isSettingsOpen, openSettingsCategory]);
 
   useEffect(() => {
     if (activeTagFilter === 'all') {
@@ -2147,9 +2418,9 @@ function App(): JSX.Element {
     const closeMenu = (): void => {
       setSplitMenu(null);
     };
-    window.addEventListener('click', closeMenu);
+    window.addEventListener('pointerdown', closeMenu);
     return () => {
-      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('pointerdown', closeMenu);
     };
   }, [splitMenu]);
 
@@ -2335,7 +2606,7 @@ function App(): JSX.Element {
       return;
     }
 
-    const handlePointerDown = (event: MouseEvent): void => {
+    const handlePointerDown = (event: PointerEvent): void => {
       const root = syncIndicatorRef.current;
       if (!root) {
         return;
@@ -2349,9 +2620,9 @@ function App(): JSX.Element {
       }
     };
 
-    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('pointerdown', handlePointerDown);
     return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [isSyncPopoverOpen]);
 
@@ -2368,7 +2639,7 @@ function App(): JSX.Element {
       return;
     }
 
-    const handlePointerDown = (event: MouseEvent): void => {
+    const handlePointerDown = (event: PointerEvent): void => {
       const root = profileMenuRef.current;
       if (!root) {
         return;
@@ -2382,9 +2653,9 @@ function App(): JSX.Element {
       }
     };
 
-    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('pointerdown', handlePointerDown);
     return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [isProfileMenuOpen]);
 
@@ -2465,6 +2736,9 @@ function App(): JSX.Element {
   }, [appView, cloudSyncSession]);
 
   const handleToggleWindowMaximize = useCallback(async (): Promise<void> => {
+    if (isMobileLayout || isAndroidClient) {
+      return;
+    }
     try {
       const maximized = await appWindow.isMaximized();
       if (maximized) {
@@ -2477,9 +2751,13 @@ function App(): JSX.Element {
     } catch (_error) {
       toast.error('窗口状态切换失败，请稍后重试。');
     }
-  }, []);
+  }, [isAndroidClient, isMobileLayout]);
 
   useEffect(() => {
+    if (isMobileLayout || isAndroidClient) {
+      setIsWindowMaximized(false);
+      return;
+    }
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
 
@@ -2513,9 +2791,12 @@ function App(): JSX.Element {
         unlisten();
       }
     };
-  }, []);
+  }, [isAndroidClient, isMobileLayout]);
 
   const forceCloseWindow = useCallback(async (): Promise<void> => {
+    if (isMobileLayout || isAndroidClient) {
+      return;
+    }
     allowWindowCloseRef.current = true;
     setIsCloseWindowPromptOpen(false);
 
@@ -2554,9 +2835,12 @@ function App(): JSX.Element {
       allowWindowCloseRef.current = false;
       toast.error('退出应用失败，请稍后重试。');
     }
-  }, []);
+  }, [isAndroidClient, isMobileLayout]);
 
   useEffect(() => {
+    if (isMobileLayout || isAndroidClient) {
+      return;
+    }
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
 
@@ -2590,7 +2874,7 @@ function App(): JSX.Element {
         unlisten();
       }
     };
-  }, [forceCloseWindow]);
+  }, [forceCloseWindow, isAndroidClient, isMobileLayout]);
 
   const detectDownloadableRelease = useCallback(async (): Promise<void> => {
     const checkedAt = new Date().toISOString();
@@ -2810,6 +3094,28 @@ function App(): JSX.Element {
     };
   }, [appView, autoLockEnabled, detectDownloadableRelease]);
 
+  useEffect(() => {
+    if (!isMobileRuntime || appView !== 'dashboard' || !mobileBiometricEnabled) {
+      return;
+    }
+    let locking = false;
+    const lockNow = (): void => {
+      if (document.visibilityState !== 'hidden' || locking) {
+        return;
+      }
+      locking = true;
+      void lockVault().finally(() => {
+        locking = false;
+      });
+    };
+    document.addEventListener('visibilitychange', lockNow);
+    window.addEventListener('blur', lockNow);
+    return () => {
+      document.removeEventListener('visibilitychange', lockNow);
+      window.removeEventListener('blur', lockNow);
+    };
+  }, [appView, isMobileRuntime, lockVault, mobileBiometricEnabled]);
+
   const sendCommandToTerminal = async (command: string, execute = false): Promise<void> => {
     if (!command.trim()) {
       return;
@@ -2831,24 +3137,251 @@ function App(): JSX.Element {
     }
   };
 
+  const sendRawInputToTerminal = useCallback(
+    async (payload: string): Promise<void> => {
+      if (!payload) {
+        return;
+      }
+      if (!activeTerminalSessionId) {
+        throw new Error('请先建立一个终端会话。');
+      }
+      try {
+        await sshWrite(activeTerminalSessionId, payload);
+        setTerminalError(null);
+      } catch (error) {
+        const fallback = '写入终端失败，连接可能已断开。';
+        const message = error instanceof Error ? error.message : fallback;
+        setTerminalError(message || fallback);
+        throw new Error(message || fallback);
+      }
+    },
+    [activeTerminalSessionId, setTerminalError]
+  );
+
   const fillCommandIntoTerminal = async (command: string): Promise<void> => {
     await sendCommandToTerminal(command, false);
   };
 
   const runSnippetInTerminal = async (command: string, autoEnter: boolean): Promise<void> => {
+    if (!autoEnter) {
+      const nextCommand = command.replace(/\r\n/g, '\n').trim();
+      if (!nextCommand) {
+        return;
+      }
+      setTerminalDraftCommand((prev) => {
+        if (!prev.trim()) {
+          return nextCommand;
+        }
+        return `${prev.replace(/\s+$/g, '')}\n${nextCommand}`;
+      });
+      setTerminalDraftHistoryCursor(-1);
+      setIsDraftHistoryOpen(false);
+      return;
+    }
     await sendCommandToTerminal(command, autoEnter);
   };
 
+  const switchActiveSessionByOffset = useCallback(
+    (offset: number): void => {
+      if (!activeSessionId || activeSessions.length <= 1) {
+        return;
+      }
+      const currentIndex = activeSessions.findIndex((session) => session.id === activeSessionId);
+      if (currentIndex < 0) {
+        return;
+      }
+      const nextIndex = (currentIndex + offset + activeSessions.length) % activeSessions.length;
+      const nextSession = activeSessions[nextIndex];
+      if (!nextSession) {
+        return;
+      }
+      setActiveSession(nextSession.id);
+    },
+    [activeSessionId, activeSessions, setActiveSession]
+  );
+
+  const handleTerminalTouchStart = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>): void => {
+      if (!isMobileLayout && !isAndroidClient) {
+        return;
+      }
+      if (event.touches.length === 0) {
+        return;
+      }
+      const first = event.touches[0];
+      if (!first) {
+        return;
+      }
+      let pinchDistance: number | null = null;
+      if (event.touches.length >= 2) {
+        const second = event.touches[1];
+        if (!second) {
+          return;
+        }
+        const dx = second.clientX - first.clientX;
+        const dy = second.clientY - first.clientY;
+        pinchDistance = Math.hypot(dx, dy);
+      }
+      terminalTouchStateRef.current = {
+        startX: first.clientX,
+        startY: first.clientY,
+        swipeHandled: false,
+        pinchDistance,
+        baseFontSize: terminalFontSize
+      };
+    },
+    [isAndroidClient, isMobileLayout, terminalFontSize]
+  );
+
+  const handleTerminalTouchMove = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>): void => {
+      const state = terminalTouchStateRef.current;
+      if (!state) {
+        return;
+      }
+      if (event.touches.length >= 2) {
+        event.preventDefault();
+        const first = event.touches[0];
+        const second = event.touches[1];
+        if (!first || !second) {
+          return;
+        }
+        const dx = second.clientX - first.clientX;
+        const dy = second.clientY - first.clientY;
+        const nextDistance = Math.hypot(dx, dy);
+        if (state.pinchDistance !== null && state.pinchDistance > 0) {
+          const delta = nextDistance - state.pinchDistance;
+          if (Math.abs(delta) >= 8) {
+            const nextFontSize = state.baseFontSize + delta / 18;
+            setTerminalFontSize(nextFontSize);
+            state.pinchDistance = nextDistance;
+            state.baseFontSize = nextFontSize;
+          }
+        } else {
+          state.pinchDistance = nextDistance;
+        }
+        return;
+      }
+      if (event.touches.length !== 1 || state.swipeHandled) {
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+      const deltaX = touch.clientX - state.startX;
+      const deltaY = touch.clientY - state.startY;
+      if (Math.abs(deltaX) < MOBILE_SESSION_SWIPE_THRESHOLD_PX) {
+        return;
+      }
+      if (Math.abs(deltaY) > MOBILE_SESSION_SWIPE_MAX_Y_DRIFT) {
+        return;
+      }
+      event.preventDefault();
+      state.swipeHandled = true;
+      if (deltaX < 0) {
+        switchActiveSessionByOffset(1);
+      } else {
+        switchActiveSessionByOffset(-1);
+      }
+    },
+    [setTerminalFontSize, switchActiveSessionByOffset]
+  );
+
+  const handleTerminalTouchEnd = useCallback((): void => {
+    terminalTouchStateRef.current = null;
+  }, []);
+
+  const mobileVirtualKeys = useMemo<
+    Array<{
+      id: string;
+      label: string;
+      payload: string;
+    }>
+  >(
+    () => [
+      { id: 'esc', label: 'Esc', payload: '\u001b' },
+      { id: 'tab', label: 'Tab', payload: '\t' },
+      { id: 'space', label: 'Space', payload: ' ' },
+      { id: 'enter', label: 'Enter', payload: '\r' },
+      { id: 'backspace', label: '⌫', payload: '\u007f' },
+      { id: 'ctrl-c', label: 'Ctrl+C', payload: '\u0003' },
+      { id: 'ctrl-d', label: 'Ctrl+D', payload: '\u0004' },
+      { id: 'ctrl-z', label: 'Ctrl+Z', payload: '\u001a' },
+      { id: 'ctrl-l', label: 'Ctrl+L', payload: '\u000c' },
+      { id: 'ctrl-r', label: 'Ctrl+R', payload: '\u0012' },
+      { id: 'ctrl-a', label: 'Ctrl+A', payload: '\u0001' },
+      { id: 'ctrl-e', label: 'Ctrl+E', payload: '\u0005' },
+      { id: 'ctrl-u', label: 'Ctrl+U', payload: '\u0015' },
+      { id: 'ctrl-k', label: 'Ctrl+K', payload: '\u000b' },
+      { id: 'ctrl-w', label: 'Ctrl+W', payload: '\u0017' },
+      { id: 'ctrl-y', label: 'Ctrl+Y', payload: '\u0019' },
+      { id: 'left', label: '←', payload: '\u001b[D' },
+      { id: 'up', label: '↑', payload: '\u001b[A' },
+      { id: 'down', label: '↓', payload: '\u001b[B' },
+      { id: 'right', label: '→', payload: '\u001b[C' },
+      { id: 'home', label: 'Home', payload: '\u001b[H' },
+      { id: 'end', label: 'End', payload: '\u001b[F' },
+      { id: 'pgup', label: 'PgUp', payload: '\u001b[5~' },
+      { id: 'pgdn', label: 'PgDn', payload: '\u001b[6~' },
+      { id: 'pipe', label: '|', payload: '|' },
+      { id: 'amp', label: '&', payload: '&' },
+      { id: 'semicolon', label: ';', payload: ';' },
+      { id: 'tilde', label: '~', payload: '~' },
+      { id: 'slash', label: '/', payload: '/' },
+      { id: 'quote', label: '"', payload: '"' },
+      { id: 'single-quote', label: "'", payload: "'" }
+    ],
+    []
+  );
+
+  const handleSendVirtualKey = useCallback(
+    async (payload: string): Promise<void> => {
+      if (!activeTerminalSessionId) {
+        toast.error(
+          locale === 'en-US'
+            ? 'Please open a terminal session first.'
+            : locale === 'ja-JP'
+              ? '先に端末セッションを接続してください。'
+              : locale === 'zh-TW'
+                ? '請先建立終端會話。'
+                : '请先建立终端会话。'
+        );
+        return;
+      }
+      try {
+        await sendRawInputToTerminal(payload);
+      } catch (error) {
+        const fallback =
+          locale === 'en-US'
+            ? 'Virtual key send failed.'
+            : locale === 'ja-JP'
+              ? '仮想キー送信に失敗しました。'
+              : locale === 'zh-TW'
+                ? '虛擬按鍵發送失敗。'
+                : '虚拟按键发送失败。';
+        const message = error instanceof Error ? error.message : fallback;
+        toast.error(message || fallback);
+      }
+    },
+    [activeTerminalSessionId, locale, sendRawInputToTerminal]
+  );
+
   const executeDraftCommand = async (): Promise<void> => {
-    const command = terminalDraftCommand.trim();
-    if (!command) {
+    const normalized = terminalDraftCommand.replace(/\r\n/g, '\n').replace(/\n+$/g, '');
+    if (!normalized.trim()) {
       return;
     }
+    const lines = normalized
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+    const historyEntry = lines.join('\n');
+    const payload = `${normalized}\n`;
     try {
-      await sendCommandToTerminal(command, true);
+      await sendRawInputToTerminal(payload);
       setTerminalDraftHistory((prev) => {
-        const deduped = prev.filter((item) => item !== command);
-        const next = [...deduped, command];
+        const deduped = prev.filter((item) => item !== historyEntry);
+        const next = [...deduped, historyEntry];
         if (next.length <= TERMINAL_DRAFT_HISTORY_LIMIT) {
           return next;
         }
@@ -2864,6 +3397,30 @@ function App(): JSX.Element {
       toast.error(message || fallback);
     }
   };
+
+  const handleToggleMobileKeyboardInput = useCallback((): void => {
+    setIsMobilePortraitKeyboardInputEnabled((prev) => {
+      const next = !prev;
+      if (!next) {
+        terminalPreInputRef.current?.blur();
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCopyTerminalOutput = useCallback(async (scope: 'visible' | 'all' = 'visible'): Promise<void> => {
+    const copyFn = copyActiveTerminalOutputRef.current;
+    if (!copyFn) {
+      toast.message('当前没有可复制的终端输出。');
+      return;
+    }
+    const copied = await copyFn(scope);
+    if (!copied) {
+      toast.error('复制失败，请稍后重试。');
+      return;
+    }
+    toast.success(scope === 'visible' ? '已复制当前可见区域输出。' : '已复制当前终端全部输出。');
+  }, []);
 
   const handleOpenHostInfo = useCallback(async (): Promise<void> => {
     if (!activeTerminalSessionId) {
@@ -3521,6 +4078,9 @@ function App(): JSX.Element {
       if (!data) {
         return;
       }
+      if (isMobileRuntime) {
+        return;
+      }
 
       if (autoSftpPathSyncEnabled) {
         consumeTerminalInputForAutoSftpSync(sourceSessionId, data);
@@ -3539,7 +4099,7 @@ function App(): JSX.Element {
         queueBufferedInputForSession(targetSessionId, data);
       }
     },
-    [autoSftpPathSyncEnabled, consumeTerminalInputForAutoSftpSync, queueBufferedInputForSession]
+    [autoSftpPathSyncEnabled, consumeTerminalInputForAutoSftpSync, isMobileRuntime, queueBufferedInputForSession]
   );
 
   const handlePaneSessionClosed = useCallback(
@@ -3648,6 +4208,9 @@ function App(): JSX.Element {
 
   const handleSplitFromMenu = useCallback(
     async (direction: SplitDirection): Promise<void> => {
+      if (isMobileRuntime) {
+        return;
+      }
       if (!splitMenu) {
         return;
       }
@@ -3692,7 +4255,7 @@ function App(): JSX.Element {
         toast.error(message || fallback);
       }
     },
-    [openDetachedSession, setActiveSession, splitMenu]
+    [isMobileRuntime, openDetachedSession, setActiveSession, splitMenu]
   );
 
   const handlePaneContextMenu = (
@@ -3700,6 +4263,9 @@ function App(): JSX.Element {
     tabSessionId: string,
     paneId: string
   ): void => {
+    if (isMobileRuntime) {
+      return;
+    }
     event.preventDefault();
     setActiveSession(tabSessionId);
     setActivePane(tabSessionId, paneId);
@@ -3763,13 +4329,26 @@ function App(): JSX.Element {
       fontSize: `${uiScalePercent}%`
     };
   }, [uiScalePercent]);
+  const mobileBottomNavReservePx =
+    isMobileRuntime && appView === 'dashboard' && !isMobileTerminalFocusMode ? 84 : 0;
+  const appShellStyle = useMemo(() => {
+    return {
+      ...(appScaleStyle ?? {}),
+      paddingTop: isMobileRuntime ? 'env(safe-area-inset-top)' : undefined,
+      paddingBottom:
+        isMobileRuntime
+          ? `calc(env(safe-area-inset-bottom) + ${Math.max(0, mobileKeyboardInset)}px + ${mobileBottomNavReservePx}px)`
+          : undefined
+    };
+  }, [appScaleStyle, isMobileRuntime, mobileKeyboardInset, mobileBottomNavReservePx]);
   const shellContainerStyle = useMemo(
     () => ({
-      borderColor: 'transparent',
+      borderColor: isMobileRuntime ? activeUiPalette.panelBorder : 'transparent',
       background: activeUiPalette.shellBackground,
-      boxShadow: 'none'
+      boxShadow: 'none',
+      transition: 'none'
     }),
-    [activeUiPalette.shellBackground]
+    [activeUiPalette.panelBorder, activeUiPalette.shellBackground, isMobileRuntime]
   );
   const terminalAreaStyle = useMemo(
     () => ({
@@ -3786,7 +4365,7 @@ function App(): JSX.Element {
   if (!hasCompletedOnboarding) {
     return (
       <>
-        <FirstRunOnboarding />
+        <FirstRunOnboarding isMobileView={isMobileRuntime} />
         <Toaster
           closeButton
           expand
@@ -3805,7 +4384,7 @@ function App(): JSX.Element {
   if (appView === 'locked') {
     return (
       <>
-        <UnlockScreen />
+        <UnlockScreen isMobileView={isMobileRuntime} />
         <Toaster
           closeButton
           expand
@@ -3822,67 +4401,88 @@ function App(): JSX.Element {
   }
 
   return (
-    <main className={`m-0 h-screen w-screen overflow-hidden p-0 ${appContrastClassName}`} style={appScaleStyle}>
+    <main
+      className={`m-0 h-screen w-screen overflow-hidden ${isMobileRuntime ? 'p-1' : 'p-0'} ${appContrastClassName}`}
+      style={appShellStyle}
+    >
       <section
-        className="glass-card flex h-full w-full flex-col overflow-hidden rounded-none border-0 ring-0"
+        className={`glass-card flex h-full w-full flex-col overflow-hidden ${
+          isMobileRuntime ? 'rounded-[18px] border ring-0 shadow-[0_10px_30px_rgba(10,20,40,0.28)]' : 'rounded-none border-0 ring-0'
+        }`}
         style={shellContainerStyle}
       >
-        <header
-          className="shrink-0 border-b px-2.5 py-1.5 sm:px-3 sm:py-2"
-          style={{
-            background: activeUiPalette.headerBackground,
-            borderColor: activeUiPalette.headerBorder
-          }}
-        >
+        {!isMobileTerminalFocusMode && (
+          <header
+            className="shrink-0 border-b px-2.5 py-1.5 sm:px-3 sm:py-2"
+            style={{
+              background: activeUiPalette.headerBackground,
+              borderColor: activeUiPalette.headerBorder
+            }}
+          >
           <div className="flex min-w-0 items-center justify-between gap-1.5">
             <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5">
-              <button
-                className={`${toolbarButtonClass} ${
-                  dashboardSection === 'hosts' ? '' : 'opacity-85'
-                }`}
-                onClick={() => setDashboardSection('hosts')}
-                style={
-                  dashboardSection === 'hosts'
-                    ? {
-                        borderColor: activeUiPalette.accent,
-                        background: activeUiPalette.accentSoft,
-                        color: activeUiPalette.textPrimary
-                      }
-                    : undefined
-                }
-                type="button"
-              >
-                {uiText.navHosts}
-              </button>
-              <button
-                className={`${toolbarButtonClass} ${
-                  dashboardSection === 'terminal' ? '' : 'opacity-85'
-                }`}
-                onClick={() => setDashboardSection('terminal')}
-                style={
-                  dashboardSection === 'terminal'
-                    ? {
-                        borderColor: activeUiPalette.accent,
-                        background: activeUiPalette.accentSoft,
-                        color: activeUiPalette.textPrimary
-                      }
-                    : undefined
-                }
-                type="button"
-              >
-                {uiText.navTerminal}
-              </button>
-              <button
-                className={toolbarButtonClass}
-                onClick={() => {
-                  setCommandPaletteQuery('');
-                  setCommandPaletteActiveIndex(0);
-                  setIsCommandPaletteOpen(true);
-                }}
-                type="button"
-              >
-                {uiText.navPalette}
-              </button>
+              {isMobileLayout ? (
+                <div
+                  className="inline-flex min-h-11 items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                  style={{
+                    borderColor: activeUiPalette.panelBorder,
+                    background: activeUiPalette.panelBackground,
+                    color: activeUiPalette.textPrimary
+                  }}
+                >
+                  {mobileNavTitle}
+                </div>
+              ) : (
+                <>
+                  <button
+                    className={`${toolbarButtonClass} ${
+                      dashboardSection === 'hosts' ? '' : 'opacity-85'
+                    }`}
+                    onClick={() => setDashboardSection('hosts')}
+                    style={
+                      dashboardSection === 'hosts'
+                        ? {
+                            borderColor: activeUiPalette.accent,
+                            background: activeUiPalette.accentSoft,
+                            color: activeUiPalette.textPrimary
+                          }
+                        : undefined
+                    }
+                    type="button"
+                  >
+                    {uiText.navHosts}
+                  </button>
+                  <button
+                    className={`${toolbarButtonClass} ${
+                      dashboardSection === 'terminal' ? '' : 'opacity-85'
+                    }`}
+                    onClick={() => setDashboardSection('terminal')}
+                    style={
+                      dashboardSection === 'terminal'
+                        ? {
+                            borderColor: activeUiPalette.accent,
+                            background: activeUiPalette.accentSoft,
+                            color: activeUiPalette.textPrimary
+                          }
+                        : undefined
+                    }
+                    type="button"
+                  >
+                    {uiText.navTerminal}
+                  </button>
+                  <button
+                    className={toolbarButtonClass}
+                    onClick={() => {
+                      setCommandPaletteQuery('');
+                      setCommandPaletteActiveIndex(0);
+                      setIsCommandPaletteOpen(true);
+                    }}
+                    type="button"
+                  >
+                    {uiText.navPalette}
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -3948,13 +4548,14 @@ function App(): JSX.Element {
               </div>
 
               <button
-                className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
+                className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
                 onClick={() => {
                   void lockVault();
                 }}
                 type="button"
+                title={uiText.navLockNow}
               >
-                {uiText.navLockNow}
+                {isMobileLayout ? '🔒' : uiText.navLockNow}
               </button>
 
               <div className="relative" ref={profileMenuRef}>
@@ -3980,7 +4581,7 @@ function App(): JSX.Element {
                 </button>
 
                 {isProfileMenuOpen && (
-                  <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-80 rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur">
+                  <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-[min(92vw,20rem)] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-xl backdrop-blur sm:w-80">
                     <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
                       <p className="truncate text-xs font-semibold text-slate-800">{accountDisplayName}</p>
                       <p className="mt-0.5 text-[11px] text-slate-500">
@@ -4168,9 +4769,18 @@ function App(): JSX.Element {
               </div>
             </div>
           </div>
-        </header>
+          </header>
+        )}
 
-        <div className="min-h-0 flex-1 overflow-hidden p-0">
+        <div
+          className={`min-h-0 flex-1 overflow-hidden ${
+            isMobileRuntime
+              ? isMobileTerminalFocusMode
+                ? 'px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-0'
+                : 'px-1 pb-[calc(4.8rem+env(safe-area-inset-bottom))] pt-1'
+              : 'p-0'
+          }`}
+        >
           {saveError && (
             <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
               {saveError}
@@ -4181,7 +4791,9 @@ function App(): JSX.Element {
             <section className="relative flex h-full min-h-0 gap-2 rounded-none p-0" style={{ background: activeUiPalette.softSurface }}>
               <aside
                 className={`${
-                  isHostFilterDrawerOpen ? 'translate-x-0 opacity-100' : '-translate-x-3 opacity-0 sm:translate-x-0 sm:opacity-100'
+                  isHostFilterDrawerOpen
+                    ? 'translate-x-0 opacity-100 pointer-events-auto'
+                    : '-translate-x-3 opacity-0 pointer-events-none sm:translate-x-0 sm:opacity-100 sm:pointer-events-auto'
                 } absolute left-2 top-2 z-20 h-[calc(100%-1rem)] w-44 shrink-0 rounded-xl p-3 shadow-xl transition sm:static sm:h-auto sm:w-40 sm:opacity-100`}
                 style={{
                   background: activeUiPalette.panelBackground,
@@ -4558,14 +5170,14 @@ function App(): JSX.Element {
           )}
 
           <section
-            className={`relative h-full min-h-0 overflow-hidden rounded-none bg-[#05080f]/92 p-0 ${
+            className={`relative h-full min-h-0 overflow-hidden rounded-xl bg-[#05080f]/92 p-0 ${
               dashboardSection === 'terminal' ? 'flex flex-col' : 'hidden'
             }`}
             ref={terminalSplitRef}
             style={terminalAreaStyle}
           >
             <div
-              className="shrink-0 rounded-lg border px-2 py-1"
+              className={`shrink-0 rounded-lg border ${isMobileRuntime ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}
               style={{
                 borderColor: toRgba(activeThemePreset.terminalBorder, 0.74),
                 background: toRgba(activeThemePreset.terminalSurfaceHex, 0.84)
@@ -4574,8 +5186,166 @@ function App(): JSX.Element {
               <div className="flex items-center justify-between gap-1.5">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <h2 className="text-[11px] font-semibold text-[#d7e5ff]">{uiText.terminalTitle}</h2>
+                  {!isMobileRuntime ? (
+                    <>
+                      <button
+                        className={darkPanelButtonClass}
+                        onClick={() => {
+                          setIsNewTabModalOpen(true);
+                        }}
+                        type="button"
+                      >
+                        {uiText.terminalNewWindow}
+                      </button>
+                      <button
+                        className={darkPanelButtonClass}
+                        onClick={() => {
+                          setIsInspectorOpen(true);
+                        }}
+                        type="button"
+                      >
+                        {uiText.terminalLogs}
+                      </button>
+                      {activeTerminalSessionId && (
+                        <button
+                          className={darkPanelButtonClass}
+                          onClick={() => {
+                            void handleOpenHostInfo();
+                          }}
+                          type="button"
+                        >
+                          主机信息
+                        </button>
+                      )}
+                      {activeTerminalSessionId && (
+                        <button
+                          className={`${darkPanelButtonClass} ${
+                            autoSftpPathSyncEnabled ? 'border-[#5cc89a] bg-[#123826] text-[#c9f4de] hover:bg-[#174932]' : ''
+                          }`}
+                          onClick={() => {
+                            setAutoSftpPathSyncEnabled(!autoSftpPathSyncEnabled);
+                          }}
+                          title="开启后，终端执行 cd/pushd/popd 时会自动同步 SFTP 目录"
+                          type="button"
+                        >
+                          {uiText.terminalPathSync}:
+                          {autoSftpPathSyncEnabled ? ` ${uiText.terminalPathSyncOn}` : ` ${uiText.terminalPathSyncOff}`}
+                        </button>
+                      )}
+                      {activeTerminalSessionId && (
+                        <button
+                          className={`${darkPanelButtonClass} disabled:cursor-not-allowed disabled:opacity-55`}
+                          disabled={isSyncingPath}
+                          onClick={() => {
+                            void handleSyncPathToSftp();
+                          }}
+                          type="button"
+                        >
+                          {isSyncingPath ? uiText.terminalSyncing : uiText.terminalSyncNow}
+                        </button>
+                      )}
+                      {activeSessionId && (
+                        <button
+                          className={`${darkPanelButtonClass} ${
+                            activeWorkspace?.syncInput
+                              ? 'border-[#5cc89a] bg-[#123826] text-[#c9f4de] hover:bg-[#174932]'
+                              : ''
+                          }`}
+                          onClick={handleToggleSyncInput}
+                          title="开启后，当前标签下所有分屏将同步输入"
+                          type="button"
+                        >
+                          {uiText.terminalInputSync}:
+                          {activeWorkspace?.syncInput
+                            ? ` ${uiText.terminalPathSyncOn}`
+                            : ` ${uiText.terminalPathSyncOff}`}
+                        </button>
+                      )}
+                      {activeSessionId && (
+                        <button
+                          className={darkPanelButtonClass}
+                          onClick={() => {
+                            void handleToggleWindowMaximize();
+                          }}
+                          type="button"
+                        >
+                          {isWindowMaximized ? uiText.terminalRestore : uiText.terminalMaximize}
+                        </button>
+                      )}
+                      {activeSessionId && (
+                        <button
+                          className={darkPanelButtonClass}
+                          onClick={() => {
+                            void closeTerminal();
+                          }}
+                          type="button"
+                        >
+                          {uiText.terminalCloseCurrent}
+                        </button>
+                      )}
+                      {activeSessions.length > 1 && (
+                        <button
+                          className="rounded-lg border border-amber-500 bg-amber-200/90 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+                          onClick={() => {
+                            setIsSftpCollapsed((prev) => !prev);
+                          }}
+                          type="button"
+                        >
+                          {isSftpCollapsed ? uiText.terminalExpandSftp : uiText.terminalCollapseSftp}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button
+                        className={mobileTopActionButtonClass}
+                        onClick={handleReturnToMobileApp}
+                        type="button"
+                      >
+                        返回应用
+                      </button>
+                      {!isMobileLandscape && (
+                        <>
+                          <button
+                            className={mobileTopActionButtonClass}
+                            onClick={() => {
+                              setIsMobileTerminalToolsExpanded((prev) => !prev);
+                            }}
+                            type="button"
+                          >
+                            {isMobileTerminalToolsExpanded ? '隐藏工具' : '展开工具'}
+                          </button>
+                          <button
+                            className={mobileTopActionButtonClass}
+                            onClick={() => {
+                              setIsMobileMetricsExpanded((prev) => !prev);
+                              if (isMetricDetailOpen) {
+                                setIsMetricDetailOpen(false);
+                              }
+                            }}
+                            type="button"
+                          >
+                            {isMobileMetricsExpanded ? '隐藏监控' : '展开监控'}
+                          </button>
+                          <button
+                            className={mobileTopActionButtonClass}
+                            onClick={() => {
+                              setSnippetsPanelCollapsed(!snippetsPanelCollapsed);
+                            }}
+                            type="button"
+                          >
+                            {snippetsPanelCollapsed ? uiText.terminalSnippetOpen : uiText.terminalSnippetClose}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {isMobileRuntime && isMobileTerminalToolsExpanded && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-md border border-[#385780] bg-[#0a1322]/80 p-1.5">
                   <button
-                    className={darkPanelButtonClass}
+                    className={compactDarkPanelButtonClass}
                     onClick={() => {
                       setIsNewTabModalOpen(true);
                     }}
@@ -4584,7 +5354,7 @@ function App(): JSX.Element {
                     {uiText.terminalNewWindow}
                   </button>
                   <button
-                    className={darkPanelButtonClass}
+                    className={compactDarkPanelButtonClass}
                     onClick={() => {
                       setIsInspectorOpen(true);
                     }}
@@ -4594,7 +5364,7 @@ function App(): JSX.Element {
                   </button>
                   {activeTerminalSessionId && (
                     <button
-                      className={darkPanelButtonClass}
+                      className={compactDarkPanelButtonClass}
                       onClick={() => {
                         void handleOpenHostInfo();
                       }}
@@ -4605,13 +5375,12 @@ function App(): JSX.Element {
                   )}
                   {activeTerminalSessionId && (
                     <button
-                      className={`${darkPanelButtonClass} ${
+                      className={`${compactDarkPanelButtonClass} ${
                         autoSftpPathSyncEnabled ? 'border-[#5cc89a] bg-[#123826] text-[#c9f4de] hover:bg-[#174932]' : ''
                       }`}
                       onClick={() => {
                         setAutoSftpPathSyncEnabled(!autoSftpPathSyncEnabled);
                       }}
-                      title="开启后，终端执行 cd/pushd/popd 时会自动同步 SFTP 目录"
                       type="button"
                     >
                       {uiText.terminalPathSync}:
@@ -4620,7 +5389,7 @@ function App(): JSX.Element {
                   )}
                   {activeTerminalSessionId && (
                     <button
-                      className={`${darkPanelButtonClass} disabled:cursor-not-allowed disabled:opacity-55`}
+                      className={`${compactDarkPanelButtonClass} disabled:cursor-not-allowed disabled:opacity-55`}
                       disabled={isSyncingPath}
                       onClick={() => {
                         void handleSyncPathToSftp();
@@ -4632,13 +5401,12 @@ function App(): JSX.Element {
                   )}
                   {activeSessionId && (
                     <button
-                      className={`${darkPanelButtonClass} ${
+                      className={`${compactDarkPanelButtonClass} ${
                         activeWorkspace?.syncInput
                           ? 'border-[#5cc89a] bg-[#123826] text-[#c9f4de] hover:bg-[#174932]'
                           : ''
                       }`}
                       onClick={handleToggleSyncInput}
-                      title="开启后，当前标签下所有分屏将同步输入"
                       type="button"
                     >
                       {uiText.terminalInputSync}:
@@ -4647,18 +5415,7 @@ function App(): JSX.Element {
                   )}
                   {activeSessionId && (
                     <button
-                      className={darkPanelButtonClass}
-                      onClick={() => {
-                        void handleToggleWindowMaximize();
-                      }}
-                      type="button"
-                    >
-                      {isWindowMaximized ? uiText.terminalRestore : uiText.terminalMaximize}
-                    </button>
-                  )}
-                  {activeSessionId && (
-                    <button
-                      className={darkPanelButtonClass}
+                      className={compactDarkPanelButtonClass}
                       onClick={() => {
                         void closeTerminal();
                       }}
@@ -4667,53 +5424,92 @@ function App(): JSX.Element {
                       {uiText.terminalCloseCurrent}
                     </button>
                   )}
-                  {activeSessions.length > 1 && (
+                  {activeSessionId && (
                     <button
-                      className="rounded-lg border border-amber-500 bg-amber-200/90 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+                      className={compactDarkPanelButtonClass}
                       onClick={() => {
-                        setIsSftpCollapsed((prev) => !prev);
+                        void handleCopyTerminalOutput('visible');
                       }}
                       type="button"
                     >
-                      {isSftpCollapsed ? uiText.terminalExpandSftp : uiText.terminalCollapseSftp}
+                      复制可见
                     </button>
                   )}
-                </div>
-              </div>
-              <div className="mt-1 overflow-x-auto">
-                <div className="grid min-w-[800px] grid-cols-5 gap-1">
-                  {metricCards.map((metric) => (
+                  {activeSessionId && (
                     <button
-                      className="rounded-md text-left ring-1 ring-transparent transition hover:ring-[#6ea8ff]/55 focus:outline-none focus:ring-[#6ea8ff]"
-                      key={metric.key}
+                      className={compactDarkPanelButtonClass}
                       onClick={() => {
-                        setMetricDetailKey(metric.key);
-                        setIsMetricDetailOpen(true);
+                        void handleCopyTerminalOutput('all');
                       }}
-                      title={
-                        locale === 'zh-CN'
-                          ? `查看 ${metric.title} 详细趋势`
-                          : locale === 'zh-TW'
-                            ? `查看 ${metric.title} 詳細趨勢`
-                            : locale === 'ja-JP'
-                              ? `${metric.title} の詳細トレンドを表示`
-                              : `View ${metric.title} trend details`
-                      }
                       type="button"
                     >
-                      <MetricTrendChart
-                        fillColor={metric.fillColor}
-                        fixedMax={metric.fixedMax}
-                        lineColor={metric.lineColor}
-                        points={metric.points}
-                        title={metric.title}
-                        valueText={metric.valueText}
-                      />
+                      复制全部
                     </button>
-                  ))}
+                  )}
+                  <div className="ml-auto flex items-center gap-1 rounded-md border border-[#3f5c86] bg-[#0a1322]/80 p-1">
+                    <span className="text-[10px] text-[#b8c9e6]">Aa {terminalFontSize}px</span>
+                    <button
+                      className={compactDarkPanelButtonClass}
+                      onClick={() => {
+                        setTerminalFontSize(Math.max(9, terminalFontSize - 1));
+                      }}
+                      type="button"
+                    >
+                      A-
+                    </button>
+                    <button
+                      className={compactDarkPanelButtonClass}
+                      onClick={() => {
+                        setTerminalFontSize(Math.min(20, terminalFontSize + 1));
+                      }}
+                      type="button"
+                    >
+                      A+
+                    </button>
+                  </div>
                 </div>
-              </div>
-              {isMetricDetailOpen && activeMetricCard && (
+              )}
+              {isMobileRuntime && !isMobileTerminalToolsExpanded && (
+                <p className="mt-1 text-[10px] text-[#9bb2d5]">
+                  移动端默认聚焦终端与预输入体验，扩展功能可按需展开。
+                </p>
+              )}
+              {(!isMobileRuntime || isMobileMetricsExpanded) && (
+                <div className="mt-1 overflow-x-auto">
+                  <div className="grid min-w-[620px] grid-cols-5 gap-1 md:min-w-[800px]">
+                    {metricCards.map((metric) => (
+                      <button
+                        className="rounded-md text-left ring-1 ring-transparent transition hover:ring-[#6ea8ff]/55 focus:outline-none focus:ring-[#6ea8ff]"
+                        key={metric.key}
+                        onClick={() => {
+                          setMetricDetailKey(metric.key);
+                          setIsMetricDetailOpen(true);
+                        }}
+                        title={
+                          locale === 'zh-CN'
+                            ? `查看 ${metric.title} 详细趋势`
+                            : locale === 'zh-TW'
+                              ? `查看 ${metric.title} 詳細趨勢`
+                              : locale === 'ja-JP'
+                                ? `${metric.title} の詳細トレンドを表示`
+                                : `View ${metric.title} trend details`
+                        }
+                        type="button"
+                      >
+                        <MetricTrendChart
+                          fillColor={metric.fillColor}
+                          fixedMax={metric.fixedMax}
+                          lineColor={metric.lineColor}
+                          points={metric.points}
+                          title={metric.title}
+                          valueText={metric.valueText}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(!isMobileRuntime || isMobileMetricsExpanded) && isMetricDetailOpen && activeMetricCard && (
                 <div
                   className="mt-1 rounded-lg border px-2 py-1.5"
                   style={{
@@ -4788,21 +5584,23 @@ function App(): JSX.Element {
               )}
             </div>
 
-            <div className="min-h-0 flex flex-1 gap-2.5">
+            <div className={`min-h-0 flex flex-1 gap-2.5 ${isMobileRuntime ? 'flex-col' : ''}`}>
               <div
                 className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl p-1.5"
                 style={{
-                  border: `1px solid ${toRgba(activeThemePreset.terminalBorder, 0.44)}`,
-                  background: toRgba(activeThemePreset.terminalSurfaceHex, 0.72)
+                  background: toRgba(activeThemePreset.terminalSurfaceHex, 0.72),
+                  boxShadow: `inset 0 0 0 1px ${toRgba(activeThemePreset.terminalBorder, 0.18)}`
                 }}
               >
                 <SnippetsPanel
-                  className="bottom-[74px] right-2"
                   hasActiveSession={Boolean(activeTerminalSessionId)}
+                  isMobileView={isMobileRuntime}
                   onCreateSnippet={addSnippet}
                   onDeleteSnippet={deleteSnippet}
+                  onQuickKeyPress={handleSendVirtualKey}
                   onRunSnippet={runSnippetInTerminal}
                   onUpdateSnippet={updateSnippet}
+                  quickKeys={isMobileRuntime ? mobileVirtualKeys : []}
                   snippets={snippets}
                 />
 
@@ -4822,13 +5620,15 @@ function App(): JSX.Element {
                 )}
                 {reconnectMessage && <p className="mb-1 text-xs text-amber-300">{reconnectMessage}</p>}
 
-                <div className="mb-1 flex flex-wrap gap-1.5">
+                <div className={`${isMobileRuntime ? 'mb-0.5 flex flex-wrap gap-1' : 'mb-1 flex flex-wrap gap-1.5'}`}>
                   {activeSessions.length === 0 ? (
                     <p className="text-xs text-[#8ca2c5]">{uiText.terminalNoSession}</p>
                   ) : (
                     activeSessions.map((session) => (
                       <div
-                        className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs ${
+                        className={`flex items-center gap-1 rounded-md border ${
+                          isMobileRuntime ? 'h-[18px] px-2 py-0 text-[11px] leading-[1]' : 'h-[20px] px-1 py-0 text-[9px] leading-[1]'
+                        } ${
                           activeSessionId === session.id
                             ? 'border-[#4f6f9d] bg-[#11203a] text-[#d7e5ff]'
                             : 'border-[#2a3f61] bg-[#0a1220] text-[#8fa5c7]'
@@ -4836,7 +5636,7 @@ function App(): JSX.Element {
                         key={session.id}
                       >
                         <button
-                          className="max-w-[180px] truncate px-1 text-left"
+                          className={`ot-compact-hit ${isMobileRuntime ? 'max-w-[150px]' : 'max-w-[180px]'} truncate px-1 text-left`}
                           onClick={() => {
                             setActiveSession(session.id);
                           }}
@@ -4846,7 +5646,7 @@ function App(): JSX.Element {
                           {session.title}
                         </button>
                         <button
-                          className="rounded px-1 hover:bg-[#1b2d4a]"
+                          className="ot-compact-hit rounded px-1 hover:bg-[#1b2d4a]"
                           onClick={() => {
                             void closeSession(session.id);
                           }}
@@ -4860,231 +5660,368 @@ function App(): JSX.Element {
                   )}
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {activeSessions.length > 0 ? (
-                    <div className="h-full min-h-0">
-                      {activeSessions.map((session) => {
-                        const workspace = splitWorkspaces[session.id] ?? createDefaultWorkspace(session);
-                        const isTabActive = activeSessionId === session.id;
-                        return (
-                          <div
-                            className={`${isTabActive ? 'block' : 'hidden'} h-full min-h-0`}
-                            key={session.id}
-                          >
+                <div className={`min-h-0 flex-1 ${isMobileRuntime && isMobileLandscape ? 'flex gap-1.5' : 'flex flex-col'}`}>
+                  <div
+                    className={`min-h-0 overflow-hidden ${
+                      isMobileRuntime && isMobileLandscape
+                        ? 'w-1/2 shrink-0'
+                        : `flex-1 ${isMobileRuntime ? 'min-h-[46vh]' : ''}`
+                    }`}
+                    onTouchEnd={handleTerminalTouchEnd}
+                    onTouchMove={handleTerminalTouchMove}
+                    onTouchStart={handleTerminalTouchStart}
+                  >
+                    {activeSessions.length > 0 ? (
+                      <div className="h-full min-h-0">
+                        {activeSessions.map((session) => {
+                          const workspace = splitWorkspaces[session.id] ?? createDefaultWorkspace(session);
+                          const isTabActive = activeSessionId === session.id;
+                          const mobileFocusedPane =
+                            findPaneById(workspace.root, workspace.activePaneId) ??
+                            collectWorkspacePanes(workspace.root)[0] ??
+                            null;
+                          const displayLayout =
+                            isMobileRuntime && mobileFocusedPane
+                              ? ({
+                                  type: 'pane',
+                                  pane: mobileFocusedPane
+                                } as TerminalLayoutNode)
+                              : workspace.root;
+                          return (
                             <div
-                              className="h-full min-h-0 overflow-hidden rounded-lg border"
-                              style={{
-                                borderColor: toRgba(activeThemePreset.terminalBorder, 0.56),
-                                background: toRgba(activeThemePreset.terminalSurfaceHex, 0.6)
-                              }}
+                              className={`${isTabActive ? 'block' : 'hidden'} h-full min-h-0`}
+                              key={session.id}
                             >
-                              <OrbitTerminal
-                                activePaneId={workspace.activePaneId}
-                                blurPx={terminalBlur}
-                                borderColor={activeThemePreset.terminalBorder}
-                                chromePalette={activeTerminalChromePalette}
-                                fontFamily={terminalFontFamily}
-                                fontSize={terminalFontSize}
-                                isTabActive={isTabActive}
-                                layout={workspace.root}
-                                lineHeight={terminalLineHeight}
-                                onActivePaneChange={(paneId) => {
-                                  setActiveSession(session.id);
-                                  setActivePane(session.id, paneId);
+                              <div
+                                className="h-full min-h-0 overflow-hidden rounded-lg"
+                                style={{
+                                  background: toRgba(activeThemePreset.terminalSurfaceHex, 0.6)
                                 }}
-                                onPaneContextMenu={(event, paneId) => {
-                                  handlePaneContextMenu(event, session.id, paneId);
-                                }}
-                                onPaneInput={(paneSessionId, data) => {
-                                  handlePaneInput(session.id, paneSessionId, data);
-                                }}
+                              >
+                                <OrbitTerminal
+                                  activePaneId={workspace.activePaneId}
+                                  blurPx={terminalBlur}
+                                  borderColor={activeThemePreset.terminalBorder}
+                                  chromePalette={activeTerminalChromePalette}
+                                  disableInteractiveInput={isMobileRuntime}
+                                  hidePaneHeader={isMobileRuntime}
+                                  fontFamily={terminalFontFamily}
+                                  fontSize={terminalFontSize}
+                                  isTabActive={isTabActive}
+                                  layout={displayLayout}
+                                  lineHeight={terminalLineHeight}
+                                  allowPaneContextActions={!isMobileRuntime}
+                                  onActivePaneChange={(paneId) => {
+                                    setActiveSession(session.id);
+                                    setActivePane(session.id, paneId);
+                                  }}
+                                  onPaneContextMenu={(event, paneId) => {
+                                    handlePaneContextMenu(event, session.id, paneId);
+                                  }}
+                                  onPaneInput={(paneSessionId, data) => {
+                                    handlePaneInput(session.id, paneSessionId, data);
+                                  }}
                                 onPaneSessionClosed={(paneId, paneSessionId) => {
                                   handlePaneSessionClosed(session.id, paneId, paneSessionId);
+                                }}
+                                onCopyActiveOutputReady={(copyFn) => {
+                                  if (isTabActive) {
+                                    copyActiveTerminalOutputRef.current = copyFn;
+                                  } else if (!copyFn && copyActiveTerminalOutputRef.current) {
+                                    copyActiveTerminalOutputRef.current = null;
+                                  }
                                 }}
                                 onTerminalError={(message) => {
                                   setTerminalError(message);
                                 }}
-                                surfaceHex={activeThemePreset.terminalSurfaceHex}
-                                surfaceOpacity={terminalOpacity}
-                                theme={activeThemePreset.terminalTheme}
-                              />
+                                  surfaceHex={activeThemePreset.terminalSurfaceHex}
+                                  surfaceOpacity={terminalOpacity}
+                                  theme={activeThemePreset.terminalTheme}
+                                />
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-[#2b4264] bg-[#060b13] text-sm text-[#7f94b4]">
-                      {uiText.terminalNoSessionPlaceholder}
-                    </div>
-                  )}
-                </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-[#2b4264] bg-[#060b13] text-sm text-[#7f94b4]">
+                        {uiText.terminalNoSessionPlaceholder}
+                      </div>
+                    )}
+                  </div>
 
-                <div
-                  className="mt-1 shrink-0 rounded-lg border p-2"
-                  style={{
-                    borderColor: toRgba(activeThemePreset.terminalBorder, 0.6),
-                    background: toRgba(activeThemePreset.terminalSurfaceHex, 0.8)
-                  }}
-                >
-                  <div className="flex items-end gap-2">
-                    <div className="min-w-0 flex-1">
-                      <label
-                        className="mb-1 block text-[11px]"
-                        htmlFor="terminal-pre-input"
-                        style={{ color: toRgba(activeThemePreset.terminalBorder, 0.95) }}
-                      >
-                        {uiText.terminalPreInputLabel}
-                      </label>
-                      <input
-                        className="w-full rounded-md border px-3 py-1.5 text-xs outline-none placeholder:text-slate-400"
-                        disabled={!activeTerminalSessionId}
-                        id="terminal-pre-input"
-                        onChange={(event) => {
-                          setTerminalDraftCommand(event.target.value);
-                          setTerminalDraftHistoryCursor(-1);
-                          setIsDraftHistoryOpen(false);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'ArrowUp') {
-                            if (terminalDraftHistory.length === 0) {
-                              return;
-                            }
-                            event.preventDefault();
-                            const nextCursor =
-                              terminalDraftHistoryCursor < 0
-                                ? terminalDraftHistory.length - 1
-                                : Math.max(0, terminalDraftHistoryCursor - 1);
-                            if (terminalDraftHistoryCursor < 0) {
-                              setTerminalDraftSnapshot(terminalDraftCommand);
-                            }
-                            setTerminalDraftHistoryCursor(nextCursor);
-                            const nextCommand = terminalDraftHistory[nextCursor] ?? '';
-                            setTerminalDraftCommand(nextCommand);
-                            return;
-                          }
-                          if (event.key === 'ArrowDown') {
-                            if (terminalDraftHistory.length === 0 || terminalDraftHistoryCursor < 0) {
-                              return;
-                            }
-                            event.preventDefault();
-                            if (terminalDraftHistoryCursor >= terminalDraftHistory.length - 1) {
-                              setTerminalDraftHistoryCursor(-1);
-                              setTerminalDraftCommand(terminalDraftSnapshot);
-                              return;
-                            }
-                            const nextCursor = Math.min(
-                              terminalDraftHistory.length - 1,
-                              terminalDraftHistoryCursor + 1
-                            );
-                            setTerminalDraftHistoryCursor(nextCursor);
-                            setTerminalDraftCommand(terminalDraftHistory[nextCursor] ?? '');
-                            return;
-                          }
-                          if (event.key === 'Enter' && !event.shiftKey) {
-                            event.preventDefault();
-                            void executeDraftCommand();
-                          }
-                        }}
-                        placeholder={
-                          activeTerminalSessionId
-                            ? uiText.terminalPreInputPlaceholder
-                            : uiText.terminalPreInputDisabled
-                        }
-                        style={{
-                          borderColor: toRgba(activeThemePreset.terminalBorder, 0.68),
-                          background: toRgba(activeThemePreset.terminalSurfaceHex, 0.68),
-                          color: activeThemePreset.terminalTheme.foreground ?? '#dce9ff'
-                        }}
-                        value={terminalDraftCommand}
-                      />
-                      {isDraftHistoryOpen && draftHistoryPreview.length > 0 && (
-                        <div
-                          className="mt-1.5 max-h-44 overflow-auto rounded-md border p-1 text-[11px]"
-                          style={{
-                            borderColor: toRgba(activeThemePreset.terminalBorder, 0.52),
-                            background: toRgba(activeThemePreset.terminalSurfaceHex, 0.86)
-                          }}
+                  <div
+                    className={`rounded-lg border-t px-2 pt-2 ${
+                      isMobileRuntime && !isMobileLandscape
+                        ? 'mt-1 sticky bottom-0 z-30 shrink-0 pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
+                        : 'min-h-0 flex-1 pb-2'
+                    }`}
+                    style={{
+                      borderColor: toRgba(activeThemePreset.terminalBorder, 0.38),
+                      background: toRgba(activeThemePreset.terminalSurfaceHex, 0.76)
+                    }}
+                  >
+                    <div className={`flex ${isMobileRuntime && isMobileLandscape ? 'h-full flex-col' : 'items-end'} gap-2`}>
+                      <div className="min-w-0 flex-1">
+                        <label
+                          className="mb-1 block text-[11px]"
+                          htmlFor="terminal-pre-input"
+                          style={{ color: toRgba(activeThemePreset.terminalBorder, 0.95) }}
                         >
-                          {draftHistoryPreview.map((item, index) => (
-                            <button
-                              className="block w-full truncate rounded px-2 py-1 text-left hover:bg-white/10"
-                              key={`${item}-${index}`}
-                              onClick={() => {
-                                setTerminalDraftCommand(item);
+                          {isMobileRuntime
+                            ? `${uiText.terminalPreInputLabel}（Enter 发送，Shift+Enter 换行）`
+                            : uiText.terminalPreInputLabel}
+                        </label>
+                        <textarea
+                          className={`w-full resize-none rounded-md border px-3 py-1.5 outline-none placeholder:text-slate-400 ${
+                            isMobileRuntime ? 'text-sm leading-6' : 'text-xs'
+                          }`}
+                          disabled={!activeTerminalSessionId}
+                          id="terminal-pre-input"
+                          readOnly={!allowPreInputKeyboard}
+                          ref={terminalPreInputRef}
+                          onChange={(event) => {
+                            setTerminalDraftCommand(event.target.value);
+                            setTerminalDraftHistoryCursor(-1);
+                            setIsDraftHistoryOpen(false);
+                          }}
+                          onClick={(event) => {
+                            if (isMobileRuntime && !allowPreInputKeyboard) {
+                              event.preventDefault();
+                              toast.message('请先点击“键盘输入”按钮，再点击输入栏调出系统键盘。');
+                            }
+                          }}
+                          onPointerDown={(event) => {
+                            if (isMobileRuntime && !allowPreInputKeyboard) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }
+                          }}
+                          onTouchStart={(event) => {
+                            if (isMobileRuntime && !allowPreInputKeyboard) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }
+                          }}
+                          onFocus={() => {
+                            if (isMobileRuntime && !allowPreInputKeyboard) {
+                              terminalPreInputRef.current?.blur();
+                              return;
+                            }
+                            if (!isMobileRuntime) {
+                              return;
+                            }
+                            window.setTimeout(() => {
+                              terminalPreInputRef.current?.scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'nearest',
+                                inline: 'nearest'
+                              });
+                            }, 80);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'ArrowUp') {
+                              if (terminalDraftHistory.length === 0) {
+                                return;
+                              }
+                              event.preventDefault();
+                              const nextCursor =
+                                terminalDraftHistoryCursor < 0
+                                  ? terminalDraftHistory.length - 1
+                                  : Math.max(0, terminalDraftHistoryCursor - 1);
+                              if (terminalDraftHistoryCursor < 0) {
+                                setTerminalDraftSnapshot(terminalDraftCommand);
+                              }
+                              setTerminalDraftHistoryCursor(nextCursor);
+                              const nextCommand = terminalDraftHistory[nextCursor] ?? '';
+                              setTerminalDraftCommand(nextCommand);
+                              return;
+                            }
+                            if (event.key === 'ArrowDown') {
+                              if (terminalDraftHistory.length === 0 || terminalDraftHistoryCursor < 0) {
+                                return;
+                              }
+                              event.preventDefault();
+                              if (terminalDraftHistoryCursor >= terminalDraftHistory.length - 1) {
                                 setTerminalDraftHistoryCursor(-1);
-                                setIsDraftHistoryOpen(false);
+                                setTerminalDraftCommand(terminalDraftSnapshot);
+                                return;
+                              }
+                              const nextCursor = Math.min(
+                                terminalDraftHistory.length - 1,
+                                terminalDraftHistoryCursor + 1
+                              );
+                              setTerminalDraftHistoryCursor(nextCursor);
+                              setTerminalDraftCommand(terminalDraftHistory[nextCursor] ?? '');
+                              return;
+                            }
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                              event.preventDefault();
+                              void executeDraftCommand();
+                            }
+                          }}
+                          placeholder={
+                            activeTerminalSessionId
+                              ? uiText.terminalPreInputPlaceholder
+                              : uiText.terminalPreInputDisabled
+                          }
+                          style={{
+                            borderColor: toRgba(activeThemePreset.terminalBorder, 0.68),
+                            background: toRgba(activeThemePreset.terminalSurfaceHex, 0.68),
+                            color: activeThemePreset.terminalTheme.foreground ?? '#dce9ff'
+                          }}
+                          value={terminalDraftCommand}
+                          rows={isMobileRuntime ? (isMobileLandscape ? 8 : 4) : 1}
+                        />
+                        {isMobileRuntime && (
+                          <p className="mt-1 text-[11px] text-[#a8bcde]">
+                            {terminalDraftCommand.trim()
+                              ? `已输入 ${terminalDraftCommand.length} 个字符`
+                              : '在此输入命令，发送后会逐行执行。'}
+                          </p>
+                        )}
+                        {isDraftHistoryOpen && draftHistoryPreview.length > 0 && (
+                          <div
+                            className="mt-1.5 max-h-44 overflow-auto rounded-md border p-1 text-[11px]"
+                            style={{
+                              borderColor: toRgba(activeThemePreset.terminalBorder, 0.52),
+                              background: toRgba(activeThemePreset.terminalSurfaceHex, 0.86)
+                            }}
+                          >
+                            {draftHistoryPreview.map((item, index) => (
+                              <button
+                                className="block w-full truncate rounded px-2 py-1 text-left hover:bg-white/10"
+                                key={`${item}-${index}`}
+                                onClick={() => {
+                                  setTerminalDraftCommand(item);
+                                  setTerminalDraftHistoryCursor(-1);
+                                  setIsDraftHistoryOpen(false);
+                                }}
+                                style={{ color: activeThemePreset.terminalTheme.foreground ?? '#dce9ff' }}
+                                type="button"
+                              >
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className={`flex shrink-0 ${isMobileRuntime && isMobileLandscape ? 'flex-wrap' : 'flex-col'} gap-1`}>
+                        {isMobileRuntime && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              className={terminalDraftActionButtonClass}
+                              onClick={() => {
+                                void handleCopyTerminalOutput('visible');
                               }}
-                              style={{ color: activeThemePreset.terminalTheme.foreground ?? '#dce9ff' }}
                               type="button"
                             >
-                              {item}
+                              复制可见
                             </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col gap-1.5">
-                      <button
-                        className={`${darkPanelButtonClass}`}
-                        onClick={() => {
-                          setIsDraftHistoryOpen((prev) => !prev);
-                        }}
-                        type="button"
-                      >
-                        历史命令
-                      </button>
-                      <div className="flex items-center gap-1">
+                            <button
+                              className={terminalDraftActionButtonClass}
+                              onClick={() => {
+                                void handleCopyTerminalOutput('all');
+                              }}
+                              type="button"
+                            >
+                              复制全部
+                            </button>
+                          </div>
+                        )}
                         <button
-                          className={darkPanelButtonClass}
+                          className={isMobileRuntime ? terminalDraftActionButtonClass : darkPanelButtonClass}
                           onClick={() => {
-                            setTerminalLineHeight(Math.max(1, terminalLineHeight - 0.1));
+                            setIsDraftHistoryOpen((prev) => !prev);
                           }}
                           type="button"
                         >
-                          行距-
+                          历史命令
                         </button>
-                        <span className="min-w-[52px] text-center text-[11px] text-[#b8c9e6]">
-                          {terminalLineHeight.toFixed(2)}x
-                        </span>
                         <button
-                          className={darkPanelButtonClass}
+                          className={`${
+                            isMobileRuntime ? terminalDraftActionButtonClass : darkPanelButtonClass
+                          } disabled:cursor-not-allowed disabled:opacity-55`}
+                          disabled={!activeTerminalSessionId || !terminalDraftCommand.trim()}
                           onClick={() => {
-                            setTerminalLineHeight(Math.min(2.4, terminalLineHeight + 0.1));
+                            void executeDraftCommand();
                           }}
                           type="button"
                         >
-                          行距+
+                          发送执行
                         </button>
+                        {isMobileRuntime && (
+                          <button
+                            className={terminalDraftActionButtonClass}
+                            onClick={() => {
+                              handleToggleMobileKeyboardInput();
+                            }}
+                            type="button"
+                          >
+                            {isMobilePortraitKeyboardInputEnabled ? '关闭键盘' : '键盘输入'}
+                          </button>
+                        )}
+                        {!isMobileRuntime && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              className={darkPanelButtonClass}
+                              onClick={() => {
+                                setTerminalLineHeight(Math.max(1, terminalLineHeight - 0.1));
+                              }}
+                              type="button"
+                            >
+                              行距-
+                            </button>
+                            <span className="min-w-[52px] text-center text-[11px] text-[#b8c9e6]">
+                              {terminalLineHeight.toFixed(2)}x
+                            </span>
+                            <button
+                              className={darkPanelButtonClass}
+                              onClick={() => {
+                                setTerminalLineHeight(Math.min(2.4, terminalLineHeight + 0.1));
+                              }}
+                              type="button"
+                            >
+                              行距+
+                            </button>
+                          </div>
+                        )}
+                        {!isMobileRuntime && (
+                          <button
+                            className={darkPanelButtonClass}
+                            onClick={() => {
+                              setSnippetsPanelCollapsed(!snippetsPanelCollapsed);
+                            }}
+                            type="button"
+                          >
+                            {snippetsPanelCollapsed ? uiText.terminalSnippetOpen : uiText.terminalSnippetClose}
+                          </button>
+                        )}
                       </div>
-                      <button
-                        className={`${darkPanelButtonClass}`}
-                        onClick={() => {
-                          setSnippetsPanelCollapsed(!snippetsPanelCollapsed);
-                        }}
-                        type="button"
-                      >
-                        {snippetsPanelCollapsed ? uiText.terminalSnippetOpen : uiText.terminalSnippetClose}
-                      </button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {!isSftpCollapsed && (
+              {!isSftpCollapsed && !isMobileRuntime && (
                 <>
+                  {!isMobileLayout && (
+                    <div
+                      aria-label="调整终端与 SFTP 分栏宽度"
+                      className={`relative h-full w-2 shrink-0 rounded bg-[#223756] transition hover:bg-[#355a89] ${
+                        isResizingSplit ? 'cursor-col-resize bg-[#4e78ab]' : 'cursor-col-resize'
+                      }`}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        setIsResizingSplit(true);
+                      }}
+                      role="separator"
+                    />
+                  )}
                   <div
-                    aria-label="调整终端与 SFTP 分栏宽度"
-                    className={`relative h-full w-2 shrink-0 rounded bg-[#223756] transition hover:bg-[#355a89] ${
-                      isResizingSplit ? 'cursor-col-resize bg-[#4e78ab]' : 'cursor-col-resize'
-                    }`}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      setIsResizingSplit(true);
-                    }}
-                    role="separator"
-                  />
-                  <div className="h-full shrink-0 overflow-hidden" style={{ width: `${sftpPanelWidth}px` }}>
+                    className={`overflow-hidden ${isMobileLayout ? 'h-[42%] w-full shrink-0' : 'h-full shrink-0'}`}
+                    style={isMobileLayout ? undefined : { width: `${sftpPanelWidth}px` }}
+                  >
                     <SftpManager
                       className="h-full"
                       onSendToTerminal={sendCommandToTerminal}
@@ -5097,7 +6034,7 @@ function App(): JSX.Element {
               )}
             </div>
 
-            {splitMenu && (
+            {splitMenu && !isMobileRuntime && (
               <div
                 className="fixed z-[140] min-w-[180px] rounded-xl border border-[#385780] bg-[#0b1628]/95 p-1.5 shadow-2xl backdrop-blur"
                 onClick={(event) => {
@@ -5150,6 +6087,15 @@ function App(): JSX.Element {
           </section>
         </div>
       </section>
+
+      {isMobileRuntime && appView === 'dashboard' && !isMobileTerminalFocusMode && (
+        <MobileLayout
+          activeTab={mobileNavTab}
+          locale={locale}
+          onTabChange={handleMobileTabChange}
+          palette={activeUiPalette}
+        />
+      )}
 
       {isHostInfoOpen && (
         <div className="fixed inset-0 z-[135] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
@@ -5298,11 +6244,30 @@ function App(): JSX.Element {
         </div>
       )}
 
+      {isPrivacyMaskVisible && (isMobileLayout || isAndroidClient) && (
+        <div className="pointer-events-none fixed inset-0 z-[210] flex items-center justify-center bg-slate-950/60 backdrop-blur-2xl">
+          <div className="flex flex-col items-center gap-3 rounded-3xl border border-white/20 bg-black/25 px-6 py-5">
+            <BrandLogo className="h-14 w-14 rounded-2xl border border-white/35 shadow-[0_16px_38px_rgba(15,23,42,0.36)]" />
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/75">OrbitTerm Vault</p>
+          </div>
+        </div>
+      )}
+
       <TransferCenter />
 
       {isHostWizardOpen && (
-        <div className="fixed inset-0 z-[128] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-          <div className="flex h-[min(88vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/45 bg-[#f1f7ff]/95 shadow-2xl backdrop-blur-2xl">
+        <div
+          className={`fixed inset-0 z-[128] flex bg-black/45 backdrop-blur-sm ${
+            isMobileLayout ? 'items-end justify-center p-0' : 'items-center justify-center p-4'
+          }`}
+        >
+          <div
+            className={`flex flex-col overflow-hidden border border-white/45 bg-[#f1f7ff]/95 shadow-2xl backdrop-blur-2xl ${
+              isMobileLayout
+                ? 'h-[calc(100%-env(safe-area-inset-top))] w-full rounded-t-3xl border-x-0 border-b-0'
+                : 'h-[min(88vh,860px)] w-full max-w-5xl rounded-3xl'
+            }`}
+          >
             <div className="flex items-center justify-between border-b border-white/60 px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">新增主机向导</p>
@@ -5363,8 +6328,18 @@ function App(): JSX.Element {
       )}
 
       {isNewTabModalOpen && (
-        <div className="fixed inset-0 z-[129] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-3xl border border-white/35 bg-[#0c1627]/92 p-5 text-[#dceaff] shadow-2xl backdrop-blur-2xl">
+        <div
+          className={`fixed inset-0 z-[129] flex bg-black/45 backdrop-blur-sm ${
+            isMobileLayout ? 'items-end justify-center p-0' : 'items-center justify-center p-4'
+          }`}
+        >
+          <div
+            className={`w-full border border-white/35 bg-[#0c1627]/92 p-5 text-[#dceaff] shadow-2xl backdrop-blur-2xl ${
+              isMobileLayout
+                ? 'h-[72vh] rounded-t-3xl border-x-0 border-b-0'
+                : 'max-w-2xl rounded-3xl'
+            }`}
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#8fb2e6]">新建窗口</p>
@@ -5503,6 +6478,7 @@ function App(): JSX.Element {
         activeCategory={settingsCategory}
         focusSectionId={settingsFocusSectionId}
         focusSequence={settingsFocusSequence}
+        isMobileView={isMobileRuntime}
         onClose={() => {
           setIsSettingsOpen(false);
         }}
@@ -5559,7 +6535,9 @@ function App(): JSX.Element {
           <div className="w-full max-w-md rounded-2xl border border-white/45 bg-[#f1f7ff]/95 p-5 shadow-2xl backdrop-blur-2xl">
             <h3 className="text-base font-semibold text-slate-900">关闭 OrbitTerm</h3>
             <p className="mt-2 text-sm text-slate-600">
-              你希望本次关闭窗口后“驻留系统托盘”还是“直接退出应用”？
+              {isMobileLayout || isAndroidClient
+                ? '你希望本次关闭窗口后直接退出应用吗？'
+                : '你希望本次关闭窗口后“驻留系统托盘”还是“直接退出应用”？'}
             </p>
             <label className="mt-3 inline-flex items-center gap-2 text-xs text-slate-700">
               <input
@@ -5581,19 +6559,21 @@ function App(): JSX.Element {
               >
                 取消
               </button>
-              <button
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                onClick={() => {
-                  if (rememberCloseActionChoice) {
-                    setCloseWindowAction('tray');
-                  }
-                  setIsCloseWindowPromptOpen(false);
-                  void appWindow.hide();
-                }}
-                type="button"
-              >
-                驻留系统托盘
-              </button>
+              {!isMobileLayout && !isAndroidClient && (
+                <button
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    if (rememberCloseActionChoice) {
+                      setCloseWindowAction('tray');
+                    }
+                    setIsCloseWindowPromptOpen(false);
+                    void appWindow.hide();
+                  }}
+                  type="button"
+                >
+                  驻留系统托盘
+                </button>
+              )}
               <button
                 className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
                 onClick={() => {

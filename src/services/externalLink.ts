@@ -1,4 +1,4 @@
-import { open } from '@tauri-apps/api/shell';
+import { open } from '@tauri-apps/plugin-shell';
 
 export const openExternalLink = async (url: string): Promise<void> => {
   try {
