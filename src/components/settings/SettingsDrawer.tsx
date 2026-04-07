@@ -1312,6 +1312,9 @@ export function SettingsDrawer({
                 <p className="text-emerald-900/90">同步状态：{syncStatusText}</p>
                 <p className="text-emerald-800/90">同步服务：**</p>
                 <p className="text-emerald-900/90">同步授权：{licenseSummary}</p>
+                <p className="text-emerald-800/90">
+                  说明：主机上限=可保存的远程资产数量；设备上限=登录当前账号的本地客户端数量。
+                </p>
                 {cloudSyncPolicy?.lockSyncDomain ? (
                   <p className="text-emerald-900/90">
                     域名策略：已锁定{cloudSyncPolicy.hideSyncDomainInput ? '（并隐藏输入）' : ''}

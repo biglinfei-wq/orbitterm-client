@@ -1,7 +1,7 @@
 {
   "project": "OrbitTerm Client",
   "sourceRef": "HEAD",
-  "version": "0.1.82",
-  "generatedAt": "2026-04-04T15:00:57Z",
+  "version": "0.1.85",
+  "generatedAt": "2026-04-07T01:47:46Z",
   "scope": "client-only"
 }
