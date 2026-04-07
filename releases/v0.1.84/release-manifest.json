@@ -33,13 +33,22 @@
   "androidPackages": {
     "apk": {
       "file": "OrbitTerm_0.1.84_android-universal.apk",
-      "sha256": "b8c676374a4c6d7a34fc7d1e357020e78eaf49672d51e523724f1d47508bcce9"
+      "sha256": "3be692a38208f6e5010e575ba938222e434b4530a33e487e929135a1c5ac3b00"
+    },
+    "arm64": {
+      "file": "OrbitTerm_0.1.84_android-arm64.apk",
+      "sha256": "3be692a38208f6e5010e575ba938222e434b4530a33e487e929135a1c5ac3b00"
+    },
+    "x86_64": {
+      "file": "OrbitTerm_0.1.84_android-x86_64.apk",
+      "sha256": "dd11660036c39c4d7d9ed8452922e9ee1d43519ea1ea16ada8e09be518e6a9c0"
     }
   },
   "windowsDownloadUrl": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_x64_en-US.msi",
   "macDownloadUrl": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_aarch64.dmg",
   "macDownloadUrlX64": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_x64.dmg",
   "linuxDownloadUrl": "https://github.com/biglinfei-wq/orbitterm-client/releases/download/v0.1.83/OrbitTerm_0.1.83_amd64.deb",
-  "androidDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/797f4e3da4093e82b44169a6ab2b62f5a38e9fd0/releases/v0.1.84/OrbitTerm_0.1.84_android-universal.apk",
-  "androidSha256": "b8c676374a4c6d7a34fc7d1e357020e78eaf49672d51e523724f1d47508bcce9"
+  "androidDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.84/OrbitTerm_0.1.84_android-universal.apk",
+  "androidSha256": "3be692a38208f6e5010e575ba938222e434b4530a33e487e929135a1c5ac3b00",
+  "androidSha": "3be692a38208f6e5010e575ba938222e434b4530a33e487e929135a1c5ac3b00"
 }
