@@ -1,0 +1,54 @@
+{
+  "version": "v0.1.86",
+  "date": "2026-04-07",
+  "windowsPackage": "OrbitTerm_0.1.83_x64_en-US.msi",
+  "windowsSha256": "c2ec6f30c425789a9ba2b8fcfc9aff337ff8e87eb5ca2b6a169d1ddb06203f40",
+  "windowsDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.83/OrbitTerm_0.1.83_x64_en-US.msi",
+  "macPackage": "OrbitTerm_0.1.86_aarch64.dmg",
+  "macPackageX64": "OrbitTerm_0.1.86_x64.dmg",
+  "macSha256": "60dcf77dbbba141dc9d8d6ce20a8a7f9662d792d8e3fbb1451b0a5788017fead",
+  "macSha256X64": "c45e2a6430170bcaef13a3005c0dfb72372e8710c551633057259bdc49a49a62",
+  "macDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.86/OrbitTerm_0.1.86_aarch64.dmg",
+  "macDownloadUrlX64": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.86/OrbitTerm_0.1.86_x64.dmg",
+  "macPackages": {
+    "arm64": {
+      "file": "OrbitTerm_0.1.86_aarch64.dmg",
+      "sha256": "60dcf77dbbba141dc9d8d6ce20a8a7f9662d792d8e3fbb1451b0a5788017fead"
+    },
+    "x64": {
+      "file": "OrbitTerm_0.1.86_x64.dmg",
+      "sha256": "c45e2a6430170bcaef13a3005c0dfb72372e8710c551633057259bdc49a49a62"
+    }
+  },
+  "linuxPackage": "OrbitTerm_0.1.86_amd64.deb",
+  "linuxSha256": "2cd24f3d96f9f71cbe7951f34cfcd995accfe14fe0e426cf4445f49ecbc3d79e",
+  "linuxDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.86/OrbitTerm_0.1.86_amd64.deb",
+  "linuxPackages": {
+    "deb": {
+      "file": "OrbitTerm_0.1.86_amd64.deb",
+      "sha256": "2cd24f3d96f9f71cbe7951f34cfcd995accfe14fe0e426cf4445f49ecbc3d79e"
+    },
+    "rpm": {
+      "file": "OrbitTerm-0.1.86-1.x86_64.rpm",
+      "sha256": "8bd3cd672ef2d4331e246a221801a6531d138f1732c59010a854a094aab808ef"
+    }
+  },
+  "androidPackage": "OrbitTerm_0.1.86_android-universal.apk",
+  "androidSha256": "845f3683f8060ff47312afc829d0cb3274a8f782313bb7d2d7811bc453a4bc9d",
+  "androidSha": "845f3683f8060ff47312afc829d0cb3274a8f782313bb7d2d7811bc453a4bc9d",
+  "androidDownloadUrl": "https://raw.githubusercontent.com/biglinfei-wq/orbitterm-client/main/releases/v0.1.86/OrbitTerm_0.1.86_android-universal.apk",
+  "androidPackages": {
+    "apk": {
+      "file": "OrbitTerm_0.1.86_android-universal.apk",
+      "sha256": "845f3683f8060ff47312afc829d0cb3274a8f782313bb7d2d7811bc453a4bc9d"
+    },
+    "arm64": {
+      "file": "OrbitTerm_0.1.86_android-arm64.apk",
+      "sha256": "845f3683f8060ff47312afc829d0cb3274a8f782313bb7d2d7811bc453a4bc9d"
+    },
+    "x86_64": {
+      "file": "OrbitTerm_0.1.86_android-x86_64.apk",
+      "sha256": "11b11814808fd3fe7dab1d079c970c88411682f051f9c4317776aacfa68f795b"
+    }
+  }
+}
