@@ -78,6 +78,7 @@ import { buildHostKey } from './utils/hostKey';
 import { useI18n } from './i18n/useI18n';
 import { detectMobileFormFactor, isAndroidRuntime } from './services/runtime';
 import { applyMobileOrientationMode } from './services/mobileOrientation';
+import { appendSnippetToDraft } from './services/snippetWorkflow';
 const appWindow = getCurrentWebviewWindow();
 
 type DashboardSection = 'hosts' | 'terminal';
@@ -3164,15 +3165,8 @@ function App(): JSX.Element {
 
   const runSnippetInTerminal = async (command: string, autoEnter: boolean): Promise<void> => {
     if (!autoEnter) {
-      const nextCommand = command.replace(/\r\n/g, '\n').trim();
-      if (!nextCommand) {
-        return;
-      }
       setTerminalDraftCommand((prev) => {
-        if (!prev.trim()) {
-          return nextCommand;
-        }
-        return `${prev.replace(/\s+$/g, '')}\n${nextCommand}`;
+        return appendSnippetToDraft(prev, command);
       });
       setTerminalDraftHistoryCursor(-1);
       setIsDraftHistoryOpen(false);

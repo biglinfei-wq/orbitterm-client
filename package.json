@@ -17,6 +17,8 @@
     "build:macos:x64": "bash scripts/local-build/build-macos-host.sh --arch x64",
     "setup:mobile:local": "bash scripts/local-build/setup-mobile.sh",
     "build:android:apk:debug": "bash scripts/local-build/build-android.sh",
+    "build:android:apk:release": "bash scripts/local-build/build-android-release.sh",
+    "build:android:apk:release:with-debug-universal": "bash scripts/local-build/build-android-release.sh --with-debug-universal",
     "build:ios:sim:debug": "bash scripts/local-build/build-ios.sh",
     "build:local:all": "bash scripts/local-build/build-all.sh",
     "build:local:preflight": "bash scripts/local-build/preflight.sh",
@@ -25,6 +27,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc -p website/tsconfig.json --noEmit",
     "test:client": "vitest run src/services/cloudSync.client.e2e.test.ts",
+    "test:android:regression": "vitest run src/services/snippetWorkflow.regression.test.ts",
+    "verify:android:regression": "bash scripts/local-build/android-regression.sh",
     "test": "vitest run",
     "generate:icons": "python3 scripts/generate_tauri_icons.py"
   },
